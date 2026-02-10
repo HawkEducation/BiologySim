@@ -2,310 +2,226 @@
 <html>
 <head>
     <style>
-        #simulation-wrapper {
-            position: relative;
-            width: 800px; height: 550px;
-            background: #1e1e1e; border: 4px solid #444;
-            overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: white; user-select: none;
+        body { 
+            background: #0a0a0a; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            margin: 0; 
+            font-family: 'Courier New', Courier, monospace;
+            color: #0f0;
         }
-        canvas { cursor: crosshair; }
-        #ui-overlay {
-            padding: 10px; background: rgba(0,0,0,0.8);
-            font-size: 14px; display: flex; justify-content: space-around;
-            border-bottom: 1px solid #444;
+        #main-container { display: flex; gap: 10px; border: 2px solid #333; padding: 10px; background: #111; }
+        #canvas-wrapper { position: relative; border: 1px solid #444; }
+        canvas { image-rendering: pixelated; background: #1e1e1e; display: block; }
+        #log-container {
+            width: 250px; height: 480px;
+            background: #000; border: 1px solid #444;
+            padding: 10px; font-size: 11px; overflow: hidden;
+            display: flex; flex-direction: column-reverse;
         }
-        #inspector {
-            position: absolute; bottom: 10px; right: 10px;
-            width: 200px; background: rgba(30, 30, 45, 0.95);
-            padding: 12px; border: 2px solid #8b4513;
-            border-radius: 8px; display: none; font-size: 12px;
-        }
-        #night-filter {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; transition: background 3s; z-index: 5;
-        }
-        .stat-val { color: #66ccff; font-weight: bold; }
-        .war-text { color: #ff4444; font-weight: bold; animation: blink 1s infinite; }
-        @keyframes blink { 50% { opacity: 0; } }
+        .log-entry { margin-bottom: 2px; line-height: 1.1; border-bottom: 1px solid #222; white-space: nowrap; }
+        .death { color: #ff4444; }
+        .event { color: #ffcc00; }
     </style>
 </head>
 <body>
 
-<div id="simulation-wrapper">
-    <div id="ui-overlay">
-        <span>TIME: <span id="time-display" style="color: #ffcc00;">DAY</span></span>
-        <span>TOTAL POP: <span id="pop-display" class="stat-val">0</span></span>
-        <span id="war-status" class="war-text" style="display:none;">COLONY WAR</span>
+<div id="main-container">
+    <div id="canvas-wrapper">
+        <canvas id="simCanvas" width="640" height="480"></canvas>
     </div>
-    
-    <canvas id="simCanvas" width="800" height="480"></canvas>
-    
-    <div id="inspector">
-        <h4 id="insp-title" style="margin: 0 0 5px 0; color: #8b4513;">Colony Inspector</h4>
-        Workers (a): <span id="insp-workers" class="stat-val">0</span><br>
-        Soldiers (s): <span id="insp-soldiers" class="stat-val">0</span><br>
-        Eggs (-): <span id="insp-eggs" class="stat-val">0</span><br>
-        Queen Status: <span id="insp-queen" class="stat-val">Active</span><br>
-        Enemy Kills: <span id="insp-kills" style="color: #ff4444;">0</span>
-    </div>
-
-    <div id="night-filter"></div>
+    <div id="log-container"></div>
 </div>
 
 <script>
 const canvas = document.getElementById('simCanvas');
 const ctx = canvas.getContext('2d');
-const nightFilter = document.getElementById('night-filter');
-const inspector = document.getElementById('inspector');
-const warStatus = document.getElementById('war-status');
+const logEl = document.getElementById('log-container');
 
-const DAY_LENGTH = 800;
-const ANT_CAP = 45;
-let worldTimer = 0;
-let selectedColony = null;
-let casualties = {1: 0, 2: 0};
+const CELL_SIZE = 16; 
+const COLS = Math.floor(canvas.width / CELL_SIZE);
+const ROWS = Math.floor(canvas.height / CELL_SIZE);
 
+let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
 let creatures = [];
-let plants = [];
-let eggs = [];
-let trees = [];
-let tunnels = [];
 
 const colonies = [
-    {x: 120, y: 120, id: 1, color: '#ff99ff', soldierColor: '#ff55cc', queenColor: '#ff00ff'},
-    {x: 680, y: 360, id: 2, color: '#99ffff', soldierColor: '#55ffff', queenColor: '#00ffff'}
+    {x: 4, y: 4, id: 1, color: '#ff99ff', sColor: '#ff55cc', qColor: '#ff00ff'},
+    {x: COLS-5, y: ROWS-5, id: 2, color: '#99ffff', sColor: '#55ffff', qColor: '#00ffff'}
 ];
-const water = { x: 400, y: 240, r: 70 };
+
+function addLog(text, type) {
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    entry.innerText = `> ${text}`;
+    logEl.prepend(entry);
+    if (logEl.children.length > 25) logEl.removeChild(logEl.lastChild);
+}
 
 class Creature {
-    constructor(x, y, char, color, colony = null) {
-        this.x = x; this.y = y;
+    constructor(gx, gy, char, color, colony = null) {
+        this.gx = gx; this.gy = gy;
         this.char = char; this.color = color;
         this.colony = colony;
-        this.nest = colony ? {x: colony.x, y: colony.y} : {x: x, y: y};
-        this.energy = 100; this.thirst = -50;
-        this.age = 0; this.maxAge = 4000 + Math.random() * 2000;
-        this.speed = (char === 'P') ? 1.7 : (char === 's' ? 0.8 : (char === 'a' ? 1.4 : 1.1));
-        this.combatPower = (char === 's') ? 2.5 : 0.4;
-        if(char === 'A') { this.energy = 350; this.maxAge = 8000; }
-        this.isFighting = false;
-        this.patrolAngle = Math.random() * Math.PI * 2;
+        this.energy = (char === 'P') ? 180 : 100;
+        grid[gx][gy] = this;
     }
 
-    update(isNight) {
-        this.age++;
-        this.thirst += 0.22;
-        this.isFighting = false;
-        
-        let moveSpeed = this.speed;
-        const inTunnel = tunnels.some(t => Math.hypot(this.x - t.x, this.y - t.y) < 15);
-        if (inTunnel && this.colony) moveSpeed *= 1.6;
+    move() {
+        this.energy -= (this.char === 'P' ? 0.5 : 0.25);
+        let tx = this.gx;
+        let ty = this.gy;
 
-        if (isNight) {
-            if (this.char === 'P') moveSpeed *= 1.5;
-            if (this.char === 'B' || this.char === 'H') moveSpeed *= 0.4;
-        }
-        
-        this.energy -= (this.char === 's') ? 0.14 : 0.07;
-
-        let tx = this.x, ty = this.y;
-        
-        if (this.char === 's' && this.energy > 40) {
-            this.patrolAngle += 0.02;
-            tx = this.nest.x + Math.cos(this.patrolAngle) * 70;
-            ty = this.nest.y + Math.sin(this.patrolAngle) * 70;
-        } 
-        else if (isNight && (this.char === 'B' || this.char === 'H')) {
-            tx = this.nest.x; ty = this.nest.y;
-        } else if (this.thirst > 115) {
-            tx = water.x; ty = water.y;
-        } else if (this.energy > 85 || this.char === 'A') {
-            tx = this.nest.x; ty = this.nest.y;
-        } else {
-            if (!this.destX || this.age % 120 === 0) {
-                this.destX = Math.random() * canvas.width;
-                this.destY = Math.random() * canvas.height;
+        // 1. SEEK/FLEE LOGIC
+        if (this.char === 'P') {
+            // Predator hunts
+            let target = this.scanGrid(5, (item) => item.char === 'a' || item.char === 'H');
+            if (target) {
+                tx += (target.gx > this.gx ? 1 : target.gx < this.gx ? -1 : 0);
+                ty += (target.gy > this.gy ? 1 : target.gy < this.gy ? -1 : 0);
+            } else {
+                tx += Math.floor(Math.random() * 3) - 1;
+                ty += Math.floor(Math.random() * 3) - 1;
             }
-            tx = this.destX; ty = this.destY;
+        } else if (this.char === 'a' || this.char === 'H') {
+            // Prey checks for danger
+            let danger = this.scanGrid(3, (item) => item.char === 'P');
+            if (danger) {
+                // RUN AWAY: Move in opposite direction of Predator
+                tx += (danger.gx > this.gx ? -1 : danger.gx < this.gx ? 1 : 0);
+                ty += (danger.gy > this.gy ? -1 : danger.gy < this.gy ? 1 : 0);
+            } else {
+                tx += Math.floor(Math.random() * 3) - 1;
+                ty += Math.floor(Math.random() * 3) - 1;
+            }
         }
 
-        const angle = Math.atan2(ty - this.y, tx - this.x);
-        if (Math.hypot(tx - this.x, ty - this.y) > 5) {
-            this.x += Math.cos(angle) * moveSpeed;
-            this.y += Math.sin(angle) * moveSpeed;
-        }
+        tx = Math.max(0, Math.min(COLS - 1, tx));
+        ty = Math.max(0, Math.min(ROWS - 1, ty));
 
-        if (this.char === 'a' && Math.random() < 0.006) {
-            if (tunnels.length < 150) tunnels.push({x: this.x, y: this.y, life: 1200});
-        }
-
-        if (Math.hypot(this.x - water.x, this.y - water.y) < water.r) {
-            this.thirst = -150;
-            if (this.colony) { this.energy -= 1.5; this.x = this.nest.x; this.y = this.nest.y; }
+        const occupant = grid[tx][ty];
+        if (!occupant) {
+            this.updatePos(tx, ty);
+        } else {
+            // Interaction logic
+            if (this.char === 'P' && (occupant.char === 'a' || occupant.char === 'H')) {
+                addLog(`Predator consumed ${occupant.char}`, 'death');
+                this.energy += 70;
+                this.removeCreature(occupant);
+                this.updatePos(tx, ty);
+            } else if (this.char === 'H' && occupant.char === '.') {
+                this.energy += 40;
+                grid[tx][ty] = null;
+                this.updatePos(tx, ty);
+            } else if (this.char === 'a' && occupant.char === 'f') {
+                this.energy += 30;
+                grid[tx][ty] = null;
+                this.updatePos(tx, ty);
+            }
         }
     }
 
-    draw() {
-        ctx.fillStyle = this.color;
-        ctx.font = (this.char === 's' || this.char === 'A') ? "bold 18px monospace" : "bold 15px monospace";
-        ctx.fillText(this.char, this.x, this.y);
-        if(this.isFighting) {
-            ctx.fillStyle = "#ff4444";
-            ctx.fillText("!", this.x, this.y - 12);
+    scanGrid(dist, criteria) {
+        for (let x = -dist; x <= dist; x++) {
+            for (let y = -dist; y <= dist; y++) {
+                let nx = this.gx + x, ny = this.gy + y;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    let item = grid[nx][ny];
+                    if (item && criteria(item)) return item;
+                }
+            }
         }
+        return null;
+    }
+
+    updatePos(nx, ny) {
+        grid[this.gx][this.gy] = null;
+        this.gx = nx; this.gy = ny;
+        grid[this.gx][this.gy] = this;
+    }
+
+    removeCreature(obj) {
+        creatures = creatures.filter(c => c !== obj);
+        grid[obj.gx][obj.gy] = null;
+    }
+}
+
+function spawnStatic(char, color, count) {
+    for (let i = 0; i < count; i++) {
+        let rx = Math.floor(Math.random() * COLS);
+        let ry = Math.floor(Math.random() * ROWS);
+        if (!grid[rx][ry]) grid[rx][ry] = { char, color };
     }
 }
 
 function init() {
-    for(let i=0; i<50; i++) trees.push({x: Math.random()*800, y: Math.random()*480});
     colonies.forEach(c => {
-        creatures.push(new Creature(c.x, c.y, 'A', c.queenColor, c));
-        for(let i=0; i<15; i++) creatures.push(new Creature(c.x, c.y, 'a', c.color, c));
-        for(let i=0; i<5; i++) creatures.push(new Creature(c.x, c.y, 's', c.soldierColor, c));
+        creatures.push(new Creature(c.x, c.y, 'A', c.qColor, c));
     });
-    for(let i=0; i<3; i++) creatures.push(new Creature(Math.random()*800, Math.random()*480, 'P', '#ff4444'));
-    for(let i=0; i<10; i++) creatures.push(new Creature(Math.random()*800, Math.random()*480, 'B', '#66ccff', trees[i%trees.length]));
+    for(let i=0; i<3; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'P', '#ff4444'));
+    for(let i=0; i<12; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#44ff44'));
+    spawnStatic('T', '#5d4037', 15);
 }
 
-canvas.addEventListener('mousedown', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    let found = false;
-    colonies.forEach(c => {
-        if (Math.hypot(mx - c.x, my - c.y) < 30) {
-            selectedColony = c;
-            inspector.style.display = 'block';
-            document.getElementById('insp-title').innerText = `colony ${c.id}`;
-            found = true;
-        }
-    });
-    if(!found) { selectedColony = null; inspector.style.display = 'none'; }
-});
-
-function loop() {
-    worldTimer = (worldTimer + 1) % (DAY_LENGTH * 2);
-    const isNight = worldTimer > DAY_LENGTH;
-    document.getElementById('time-display').innerText = isNight ? 'NIGHT' : 'DAY';
-    nightFilter.style.background = isNight ? "rgba(10, 10, 40, 0.55)" : "rgba(0,0,0,0)";
-    
-    ctx.fillStyle = "#1e1e1e";
+function render() {
+    ctx.fillStyle = '#1e1e1e';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Tunnels (t)
-    ctx.fillStyle = "rgba(139, 69, 19, 0.35)"; ctx.font = "12px monospace";
-    tunnels = tunnels.filter(t => {
-        t.life--;
-        ctx.fillText("t", t.x, t.y);
-        return t.life > 0;
-    });
+    ctx.font = `bold ${CELL_SIZE}px monospace`;
+    for (let x = 0; x < COLS; x++) {
+        for (let y = 0; y < ROWS; y++) {
+            let item = grid[x][y];
+            if (item) {
+                ctx.fillStyle = item.color;
+                ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
+            }
+        }
+    }
+}
 
-    // Water, Plants, Trees
-    ctx.beginPath(); ctx.arc(water.x, water.y, water.r, 0, Math.PI*2);
-    ctx.fillStyle = '#1a334d'; ctx.fill();
-    if (plants.length < 150 && Math.random() < 0.5) plants.push({x: Math.random()*800, y: Math.random()*480});
-    ctx.fillStyle = "#0a0"; plants.forEach(p => ctx.fillText(".", p.x, p.y));
-    trees.forEach(t => { ctx.fillStyle = "#5d4037"; ctx.font = "bold 16px monospace"; ctx.fillText("T", t.x, t.y); });
-    
-    // Colonies (c)
-    colonies.forEach(c => {
-        ctx.fillStyle = "#8b4513"; ctx.font = "bold 24px monospace";
-        ctx.fillText("c", c.x - 5, c.y + 5);
-        if(selectedColony === c) {
-            ctx.beginPath(); ctx.arc(c.x, c.y, 25, 0, Math.PI*2);
-            ctx.strokeStyle = "#66ccff"; ctx.stroke();
+function update() {
+    // Succession & Queen Spawn
+    colonies.forEach(col => {
+        if (!creatures.some(c => c.char === 'A' && c.colony === col)) {
+            let p = creatures.find(c => c.colony === col && c.char === 'a');
+            if (p) { p.char = 'A'; p.color = col.qColor; p.energy = 150; addLog(`Queen ${col.id} replaced`, 'event'); }
         }
     });
 
-    // Eggs (-)
-    eggs = eggs.filter(e => {
-        e.timer--; ctx.fillStyle = "#eee"; ctx.fillText("-", e.x, e.y);
-        if(e.timer <= 0) {
-            const isSoldier = Math.random() < 0.3;
-            creatures.push(new Creature(e.x, e.y, isSoldier ? 's' : 'a', isSoldier ? e.colony.soldierColor : e.colony.color, e.colony));
+    // Egg Laying
+    creatures.forEach(c => {
+        if (c.char === 'A' && c.energy > 130 && creatures.length < 120) {
+            let nx = c.gx + (Math.floor(Math.random()*3)-1);
+            let ny = c.gy + (Math.floor(Math.random()*3)-1);
+            if (nx >=0 && nx < COLS && ny >=0 && ny < ROWS && !grid[nx][ny]) {
+                creatures.push(new Creature(nx, ny, 'a', c.colony.color, c.colony));
+                c.energy -= 70;
+            }
+        }
+    });
+
+    creatures = creatures.filter(c => {
+        if (c.energy <= 0) {
+            grid[c.gx][c.gy] = null;
             return false;
         }
+        c.move();
         return true;
     });
 
-    let activeWar = false;
-    creatures = creatures.filter(c => c.energy > 0 && c.age < c.maxAge);
-    
-    // Check for dead queens and trigger succession
-    colonies.forEach(col => {
-        const hasQueen = creatures.some(c => c.char === 'A' && c.colony === col);
-        if (!hasQueen) {
-            // Find oldest worker to promote
-            const potentialQueen = creatures.filter(c => c.char === 'a' && c.colony === col).sort((a,b) => b.age - a.age)[0];
-            if (potentialQueen) {
-                potentialQueen.char = 'A';
-                potentialQueen.color = col.queenColor;
-                potentialQueen.energy = 250;
-                potentialQueen.maxAge = potentialQueen.age + 6000;
-                potentialQueen.speed = 1.1;
-            }
-        }
-    });
+    if (Math.random() < 0.2) spawnStatic('.', '#0a0', 1);
+    if (Math.random() < 0.1) spawnStatic('f', '#d2b48c', 1);
+}
 
-    creatures.forEach((c) => {
-        c.update(isNight);
-        
-        if (c.char === 'a' || c.char === 's') {
-            plants.forEach((p, i) => {
-                if (Math.hypot(c.x - p.x, c.y - p.y) < 10) { plants.splice(i, 1); c.energy += 40; }
-            });
-
-            creatures.forEach(other => {
-                const dist = Math.hypot(c.x - other.x, c.y - other.y);
-                if (other.char === 'A' && other.colony === c.colony && dist < 25) {
-                    if (c.energy > 60) { c.energy -= 35; other.energy += 50; }
-                }
-                if (other.colony && other.colony.id !== c.colony.id && dist < 12) {
-                    if ((c.char === 'a' || c.char === 's') && (other.char === 'a' || other.char === 's')) {
-                        c.energy -= other.combatPower; other.energy -= c.combatPower;
-                        c.isFighting = true; other.isFighting = true; activeWar = true;
-                        if(c.energy <= 0) casualties[other.colony.id]++;
-                        if(other.energy <= 0) casualties[c.colony.id]++;
-                    }
-                }
-            });
-        }
-
-        if (c.char === 'A' && c.energy > 170) {
-            if (creatures.filter(o => o.colony === c.colony).length < ANT_CAP) {
-                c.energy -= 100;
-                eggs.push({x: c.x + (Math.random()*40-20), y: c.y + (Math.random()*40-20), timer: 130, colony: c.colony});
-            }
-        }
-
-        if (c.char === 'P') {
-            creatures.forEach((prey, i) => {
-                if (prey.char !== 'P' && prey.char !== 'A' && Math.hypot(c.x - prey.x, c.y - prey.y) < 14) {
-                    creatures.splice(i, 1); c.energy += 85;
-                }
-            });
-        }
-        c.draw();
-    });
-
-    warStatus.style.display = activeWar ? 'inline' : 'none';
-    if (selectedColony) {
-        const workers = creatures.filter(o => o.colony === selectedColony && o.char === 'a').length;
-        const soldiers = creatures.filter(o => o.colony === selectedColony && o.char === 's').length;
-        const queen = creatures.find(o => o.colony === selectedColony && o.char === 'A');
-        document.getElementById('insp-workers').innerText = workers;
-        document.getElementById('insp-soldiers').innerText = soldiers;
-        document.getElementById('insp-eggs').innerText = eggs.filter(e => e.colony === selectedColony).length;
-        document.getElementById('insp-queen').innerText = queen ? "Active" : "Transforming...";
-        document.getElementById('insp-kills').innerText = casualties[selectedColony.id];
-    }
-    document.getElementById('pop-display').innerText = creatures.length;
-    requestAnimationFrame(loop);
+function tick() {
+    update();
+    render();
+    setTimeout(tick, 50);
 }
 
 init();
-loop();
+tick();
 </script>
 </body>
 </html>
