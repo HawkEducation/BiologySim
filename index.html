@@ -2,14 +2,14 @@
 <html>
 <head>
     <style>
-        body { background: #0a0a0a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #0f0; }
-        #main-container { display: flex; gap: 10px; border: 2px solid #333; padding: 10px; background: #111; }
-        canvas { image-rendering: pixelated; background: #1a1a1a; display: block; border: 1px solid #444; }
-        #log-container { width: 260px; height: 480px; background: #000; border: 1px solid #444; padding: 10px; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; }
-        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; }
+        body { background: #050505; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #b0f; }
+        #main-container { display: flex; gap: 10px; border: 2px solid #442244; padding: 10px; background: #110011; }
+        canvas { image-rendering: pixelated; background: #0a000a; display: block; border: 1px solid #663366; }
+        #log-container { width: 260px; height: 480px; background: #000; border: 1px solid #331133; padding: 10px; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #220022; }
         .death { color: #ff4444; }
-        .spawn { color: #00ffff; font-weight: bold; }
-        .hazard { color: #1e90ff; }
+        .virus { color: #bb00ff; font-weight: bold; }
+        .immune { color: #ffff00; }
     </style>
 </head>
 <body>
@@ -48,76 +48,60 @@ function addLog(text, type) {
 class Creature {
     constructor(gx, gy, char, color, colony = null) {
         this.gx = gx; this.gy = gy;
-        this.char = char; this.color = color;
+        this.char = char; this.baseColor = color; this.color = color;
         this.colony = colony;
-        this.energy = (char === 'P') ? 220 : (char === 's' ? 160 : 120);
+        this.energy = (char === 'P') ? 220 : 150;
+        this.isInfected = false;
+        this.isImmune = false;
         this.standingOn = null;
         grid[gx][gy] = this;
     }
 
     move() {
-        let loss = 0.03;
-        if (this.char === 'P') loss = 0.5;
-        if (this.char === 's') loss = 0.18;
-        
-        // WATER HAZARD CHECK
-        const onWater = (this.standingOn && this.standingOn.char === '~');
-        if (onWater) {
-            if (this.char === 'a' || this.char === 's' || this.char === 'A') {
-                if (Math.random() < 0.3) { 
-                    this.energy = 0; 
-                    addLog(`Ant drowned`, 'death');
-                    return;
-                }
-                loss = 5; // Rapid drain if they survive the initial dip
-            }
-            if (this.char === 'H') loss *= 10;
+        let loss = (this.char === 'P' ? 0.5 : 0.03);
+        if (this.isInfected) {
+            this.color = "#bb00ff";
+            if (this.char === 'P') loss *= 3.5;
         }
 
         this.energy -= loss;
         if (this.energy <= 0) return;
 
-        let nextX = this.gx;
-        let nextY = this.gy;
+        let moveX = Math.floor(Math.random() * 3) - 1;
+        let moveY = Math.floor(Math.random() * 3) - 1;
 
-        // Pathfinding: Try to avoid water if not already in it
-        let moveDir = { x: Math.floor(Math.random() * 3) - 1, y: Math.floor(Math.random() * 3) - 1 };
-        
         if (this.char === 'P') {
-            let prey = this.scan(8, (i) => i.char === 'a' || i.char === 'H' || i.char === 's' || i.char === 'A');
+            let prey = this.scan(10, (i) => i.char === 'a' || i.char === 'H');
             if (prey) {
-                moveDir.x = (prey.gx > this.gx ? 1 : prey.gx < this.gx ? -1 : 0);
-                moveDir.y = (prey.gy > this.gy ? 1 : prey.gy < this.gy ? -1 : 0);
+                moveX = (prey.gx > this.gx ? 1 : prey.gx < this.gx ? -1 : 0);
+                moveY = (prey.gy > this.gy ? 1 : prey.gy < this.gy ? -1 : 0);
             }
         }
 
-        // 100 IQ: Check if next step is water and avoid it
-        let targetX = this.gx + moveDir.x;
-        let targetY = this.gy + moveDir.y;
-        targetX = Math.max(0, Math.min(COLS - 1, targetX));
-        targetY = Math.max(0, Math.min(ROWS - 1, targetY));
+        let tx = Math.max(0, Math.min(COLS - 1, this.gx + moveX));
+        let ty = Math.max(0, Math.min(ROWS - 1, this.gy + moveY));
+        const target = grid[tx][ty];
 
-        let targetOccupant = grid[targetX][targetY];
-        if (targetOccupant && targetOccupant.char === '~' && !onWater) {
-            // Pick a different random direction to avoid drowning
-            moveDir.x = Math.floor(Math.random() * 3) - 1;
-            moveDir.y = Math.floor(Math.random() * 3) - 1;
-        }
-
-        nextX = Math.max(0, Math.min(COLS - 1, this.gx + moveDir.x));
-        nextY = Math.max(0, Math.min(ROWS - 1, this.gy + moveDir.y));
-
-        const occupant = grid[nextX][nextY];
-        if (!occupant || occupant.char === '~' || occupant.char === '.' || occupant.char === 'f') {
-            if (this.char === 'P' && occupant && occupant.char === '~') return; 
-            this.updatePos(nextX, nextY, occupant);
-        } else {
-            this.handleCollision(occupant, nextX, nextY);
+        if (!target || target.char === '~' || target.char === '.' || target.char === 'f' || target.char === '+') {
+            if (target && target.char === '+') { this.cure(); grid[tx][ty] = null; }
+            this.updatePos(tx, ty, target);
+        } else if (target instanceof Creature) {
+            if ((this.isInfected || target.isInfected) && (!this.isImmune && !target.isImmune)) {
+                this.isInfected = true; target.isInfected = true;
+            }
+            this.handleCollision(target, tx, ty);
         }
     }
 
+    cure() {
+        this.isInfected = false;
+        this.isImmune = true;
+        this.color = "#ffff00";
+        addLog(`${this.char} is now IMMUNE`, 'immune');
+    }
+
     handleCollision(target, tx, ty) {
-        if (this.char === 'P' && (target.char === 'a' || target.char === 'H' || target.char === 's' || target.char === 'A')) {
+        if (this.char === 'P' && (target.char === 'a' || target.char === 'H')) {
             this.energy += 100;
             this.removeCreature(target);
             this.updatePos(tx, ty);
@@ -140,13 +124,34 @@ class Creature {
     updatePos(nx, ny, occupant) {
         grid[this.gx][this.gy] = this.standingOn || null;
         this.gx = nx; this.gy = ny;
-        this.standingOn = (occupant && (occupant.char === '~' || occupant.char === '.' || occupant.char === 'f')) ? occupant : null;
+        this.standingOn = (occupant && occupant.char !== undefined) ? occupant : null;
+        if (this.standingOn && this.standingOn.char === '~' && Math.random() < 0.3) {
+            this.energy = 0; addLog(`${this.char} drowned`, 'death');
+        }
         grid[this.gx][this.gy] = this;
     }
 
     removeCreature(obj) {
         creatures = creatures.filter(c => c !== obj);
         grid[obj.gx][obj.gy] = obj.standingOn || null;
+    }
+}
+
+function generateLakes(totalTiles) {
+    let tilesPlaced = 0;
+    while (tilesPlaced < totalTiles) {
+        let rx = Math.floor(Math.random() * COLS);
+        let ry = Math.floor(Math.random() * ROWS);
+        let lakeSize = Math.floor(Math.random() * 8) + 4;
+        
+        for (let i = 0; i < lakeSize && tilesPlaced < totalTiles; i++) {
+            if (!grid[rx][ry]) {
+                grid[rx][ry] = { char: '~', color: '#1e90ff' };
+                tilesPlaced++;
+            }
+            rx = Math.max(0, Math.min(COLS-1, rx + (Math.floor(Math.random()*3)-1)));
+            ry = Math.max(0, Math.min(ROWS-1, ry + (Math.floor(Math.random()*3)-1)));
+        }
     }
 }
 
@@ -159,13 +164,12 @@ function spawnStatic(char, color, count) {
 }
 
 function init() {
-    spawnStatic('~', '#1e90ff', 60); // More water
-    colonies.forEach(c => {
-        creatures.push(new Creature(c.x, c.y, 'A', c.qColor, c));
-    });
-    for(let i=0; i<2; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'P', '#ff4444'));
-    for(let i=0; i<5; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#44ff44'));
-    spawnStatic('T', '#5d4037', 8);
+    generateLakes(70); // Spawn 70 tiles in clumps/lakes
+    spawnStatic('+', '#00ff00', 6);
+    colonies.forEach(c => { creatures.push(new Creature(c.x, c.y, 'A', c.qColor, c)); });
+    for(let i=0; i<3; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'P', '#ff4444'));
+    for(let i=0; i<8; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#44ff44'));
+    creatures[creatures.length-1].isInfected = true; 
 }
 
 function update() {
@@ -173,17 +177,11 @@ function update() {
         egg.timer--;
         if (egg.timer <= 0) {
             for(let i=0; i<2; i++) {
-                let rx = egg.gx + (Math.floor(Math.random()*3)-1);
-                let ry = egg.gy + (Math.floor(Math.random()*3)-1);
-                rx = Math.max(0, Math.min(COLS-1, rx));
-                ry = Math.max(0, Math.min(ROWS-1, ry));
-                if (!grid[rx][ry] || grid[rx][ry].char === '~') {
-                    let isS = Math.random() < 0.25;
-                    creatures.push(new Creature(rx, ry, isS ? 's' : 'a', isS ? egg.colony.sColor : egg.colony.color, egg.colony));
-                }
+                let rx = Math.max(0, Math.min(COLS-1, egg.gx + (Math.floor(Math.random()*3)-1)));
+                let ry = Math.max(0, Math.min(ROWS-1, egg.gy + (Math.floor(Math.random()*3)-1)));
+                if (!grid[rx][ry]) creatures.push(new Creature(rx, ry, 'a', egg.colony.color, egg.colony));
             }
-            grid[egg.gx][egg.gy] = egg.standingOn || null;
-            return false;
+            grid[egg.gx][egg.gy] = null; return false;
         }
         return true;
     });
@@ -191,33 +189,21 @@ function update() {
     colonies.forEach(col => {
         const queen = creatures.find(c => c.char === 'A' && c.colony === col);
         if (queen && queen.energy > 80 && creatures.length < 150) {
-            let ex = queen.gx + (Math.floor(Math.random()*3)-1);
-            let ey = queen.gy + (Math.floor(Math.random()*3)-1);
-            ex = Math.max(0, Math.min(COLS-1, ex));
-            ey = Math.max(0, Math.min(ROWS-1, ey));
-            if (!grid[ex][ey] || grid[ex][ey].char === '~') {
+            let ex = Math.max(0, Math.min(COLS-1, queen.gx + (Math.floor(Math.random()*3)-1)));
+            let ey = Math.max(0, Math.min(ROWS-1, queen.gy + (Math.floor(Math.random()*3)-1)));
+            if (!grid[ex][ey]) {
                 queen.energy -= 45;
-                let newEgg = { gx: ex, gy: ey, char: '-', color: '#eee', timer: 15, colony: col, standingOn: grid[ex][ey] }; 
-                grid[ex][ey] = newEgg;
-                eggs.push(newEgg);
+                let newEgg = { gx: ex, gy: ey, char: '-', color: '#eee', timer: 15, colony: col };
+                grid[ex][ey] = newEgg; eggs.push(newEgg);
             }
-        } else if (!creatures.some(c => c.colony === col) && Math.random() < 0.01) {
-            creatures.push(new Creature(col.x, col.y, 'A', col.qColor, col));
-            addLog(`Colony ${col.id} restarted`, 'spawn');
         }
     });
 
     creatures = creatures.filter(c => {
-        if (c.energy <= 0) { 
-            grid[c.gx][c.gy] = c.standingOn || null; 
-            return false; 
-        }
-        c.move();
-        return true;
+        if (c.energy <= 0) { grid[c.gx][c.gy] = c.standingOn || null; return false; }
+        c.move(); return true;
     });
-
-    if (Math.random() < 0.35) spawnStatic('.', '#0a0', 1);
-    if (Math.random() < 0.15) spawnStatic('f', '#d2b48c', 1);
+    if (Math.random() < 0.01) spawnStatic('+', '#00ff00', 1);
 }
 
 function tick() {
@@ -228,12 +214,12 @@ function tick() {
         for (let y = 0; y < ROWS; y++) {
             let item = grid[x][y];
             if (item) {
-                ctx.fillStyle = (item.char === '~') ? '#1e90ff' : item.color;
+                ctx.fillStyle = item.color || '#fff';
                 ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
             }
         }
     }
-    setTimeout(tick, 50);
+    setTimeout(tick, 60);
 }
 
 init();
