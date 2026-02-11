@@ -1,15 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Biology Sim</title>
     <style>
-        body { background: #050505; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #b0f; }
-        #main-container { display: flex; gap: 10px; border: 2px solid #442244; padding: 10px; background: #110011; }
-        canvas { image-rendering: pixelated; background: #0a000a; border: 1px solid #663366; }
-        #log-container { width: 260px; height: 480px; background: #000; border: 1px solid #331133; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; }
-        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #220022; padding: 2px; }
-        .virus { color: #bb00ff; font-weight: bold; }
-        .crash { color: #ff0000; text-decoration: underline; }
+        body { background: #0a1205; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #aaffaa; }
+        #main-container { display: flex; gap: 10px; border: 2px solid #2d4c1e; padding: 10px; background: #0f1a09; }
+        canvas { image-rendering: pixelated; background: #1a2e12; border: 1px solid #3d6a26; }
+        #log-container { width: 260px; height: 500px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #1a2e12; padding: 2px; }
+        .elemental { color: #5dade2; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -30,6 +28,8 @@ const ROWS = 30;
 
 let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
 let creatures = [];
+let tickCount = 0;
+let isWetSeason = true;
 
 function addLog(text, type) {
     const entry = document.createElement('div');
@@ -42,107 +42,49 @@ function addLog(text, type) {
 class Creature {
     constructor(gx, gy, char, color) {
         this.gx = gx; this.gy = gy;
-        this.char = char; this.color = color;
-        this.energy = (['P', 'V'].includes(char)) ? 300 : 160;
-        this.thirst = 0;
-        this.isInfected = false;
-        this.matingTimer = 0;
+        this.char = char; this.baseColor = color; this.color = color;
+        this.energy = (char === 'V') ? 300 : (char === 'P' ? 450 : 180);
+        this.isDamp = false; this.moveCooldown = 0;
         grid[gx][gy] = this;
     }
 
     move() {
-        // Speed logic based on health
-        if (this.char === 'B') {
-            let speedThreshold = this.isInfected ? 0.66 : 0.33;
-            if (Math.random() < speedThreshold) return; 
-        } else if (this.char !== 'B' && Math.random() < 0.2) return;
-
-        let loss = (this.char === 'V' ? 0.7 : 0.15);
-        if (this.isInfected) { loss *= 2.5; this.color = "#bb00ff"; }
+        if (this.moveCooldown > 0) { this.moveCooldown--; return; }
         
-        this.energy -= loss;
-        this.thirst += 0.5;
+        // Air interaction
+        let inAir = this.scan(0, (i) => i.char === '"');
+        if (inAir) this.isDamp = true; // Air (Steam) dampens the creature
 
-        if (this.isNearWater()) this.thirst = Math.max(0, this.thirst - 20);
+        let fire = this.scan(2, (i) => i.char === '!');
+        if (fire) {
+            if (this.isDamp) {
+                this.isDamp = false; // Shield used
+                addLog(this.char + " shield used!", "elemental");
+            } else {
+                let dx = this.gx > fire.gx ? 1 : -1;
+                let dy = this.gy > fire.gy ? 1 : -1;
+                this.updatePos(Math.max(0, Math.min(COLS-1, this.gx+dx)), Math.max(0, Math.min(ROWS-1, this.gy+dy)));
+                return;
+            }
+        }
         
-        // Vulture Crash Logic
-        if (this.energy <= 0 || this.thirst >= 100) {
-            if (this.char === 'V') addLog("Vulture crashed from sky", "crash");
-            this.die(); 
-            return; 
-        }
+        this.energy -= (this.char === 'V' ? 1.1 : 0.3);
+        if (this.isDamp) this.color = "#00ffff"; else this.color = this.baseColor;
 
-        let moveX = Math.floor(Math.random() * 3) - 1;
-        let moveY = Math.floor(Math.random() * 3) - 1;
+        if (this.energy <= 0) { this.die(); return; }
 
-        let target = this.scan(12, (i) => {
-            if (this.char === 'V') return i.char === 'B' || (this.energy < 100 && i.char === '#');
-            if (this.char === 'B') return (this.thirst > 50 && i.char === '~') || (i.char === 'g');
-            return false;
-        });
-
-        if (target) {
-            moveX = target.gx > this.gx ? 1 : (target.gx < this.gx ? -1 : 0);
-            moveY = target.gy > this.gy ? 1 : (target.gy < this.gy ? -1 : 0);
-        }
-
-        let tx = Math.max(0, Math.min(COLS - 1, this.gx + moveX));
-        let ty = Math.max(0, Math.min(ROWS - 1, this.gy + moveY));
+        let tx = Math.max(0, Math.min(COLS - 1, this.gx + (Math.floor(Math.random() * 3) - 1)));
+        let ty = Math.max(0, Math.min(ROWS - 1, this.gy + (Math.floor(Math.random() * 3) - 1)));
         const occupant = grid[tx][ty];
 
-        // Infection Spread to land animals from corpses
-        if (['H', 'P', 'a'].includes(this.char) && occupant && occupant.char === '#' && occupant.isInfected) {
-            if (Math.random() < 0.5) {
-                this.isInfected = true;
-                addLog(this.char + " touched hot corpse", "virus");
-            }
-        }
-
-        if (!occupant || ['~', '.', '#', 'g'].includes(occupant.char)) {
+        if (!occupant || ['v', 'f', '~', '#', '!', '%', 'T', '"', '.'].includes(occupant.char)) {
+            if (occupant && occupant.char === '!' && !this.isDamp) { this.die(); return; }
             this.updatePos(tx, ty, occupant);
-        } else {
-            this.handleCollision(occupant, tx, ty);
-        }
-    }
-
-    isNearWater() {
-        for (let x = -1; x <= 1; x++) {
-            for (let y = -1; y <= 1; y++) {
-                let nx = this.gx + x, ny = this.gy + y;
-                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && grid[nx][ny] && grid[nx][ny].char === '~') return true;
-            }
-        }
-        return false;
-    }
-
-    handleCollision(target, tx, ty) {
-        if (this.char === 'V' && target.char === 'V') {
-            if (creatures.filter(c => c.char === 'V').length > 5) {
-                this.energy -= 60; 
-                if (this.isInfected || target.isInfected) { this.isInfected = true; target.isInfected = true; }
-                addLog("Vultures clashing over flock!", "death");
-            } else if (!this.isInfected && !target.isInfected) {
-                this.matingTimer++;
-                if (this.matingTimer > 8) {
-                    creatures.push(new Creature(this.gx, this.gy, 'V', '#aaa'));
-                    addLog("Vulture population increased", "standard");
-                    this.matingTimer = 0;
-                }
-            }
-            return;
-        }
-
-        if (this.char === 'V' && (target.char === 'B' || target.char === 'H')) {
-            this.energy += 120;
-            if (target.isInfected) this.isInfected = true;
-            if (target instanceof Creature) creatures = creatures.filter(c => c !== target);
-            this.updatePos(tx, ty);
-            addLog("Vulture slurped a " + target.char, "standard");
         }
     }
 
     die() {
-        grid[this.gx][this.gy] = { char: '#', color: '#554433', isInfected: this.isInfected, timer: 120 };
+        grid[this.gx][this.gy] = { char: '#', color: '#554433', timer: 80 };
         creatures = creatures.filter(c => c !== this);
     }
 
@@ -150,36 +92,67 @@ class Creature {
         for (let x = -dist; x <= dist; x++) {
             for (let y = -dist; y <= dist; y++) {
                 let nx = this.gx + x, ny = this.gy + y;
-                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && grid[nx][ny] && check(grid[nx][ny])) return grid[nx][ny];
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && grid[nx][ny] && check(grid[nx][ny])) return {gx:nx, gy:ny};
             }
         }
         return null;
     }
 
     updatePos(nx, ny, occupant) {
-        grid[this.gx][this.gy] = null;
+        grid[this.gx][this.gy] = (this.standingOn && ['v','f','%','T','"', '.'].includes(this.standingOn.char)) ? this.standingOn : null;
         this.gx = nx; this.gy = ny;
+        this.standingOn = (occupant && ['v','f','%','T','"', '.'].includes(occupant.char)) ? occupant : null;
         grid[this.gx][this.gy] = this;
     }
 }
 
-function init() {
-    for(let i=0; i<15; i++) grid[Math.floor(Math.random()*COLS)][Math.floor(Math.random()*ROWS)] = {char: '~', color: '#1e90ff'};
-    for(let i=0; i<15; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'B', '#fff'));
-    for(let i=0; i<4; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaa'));
-    for(let i=0; i<10; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#44ff44'));
-    for(let i=0; i<20; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'a', '#ff99ff'));
-    creatures[creatures.length-1].isInfected = true; 
-}
+function handleEnvironment() {
+    tickCount++;
+    if (tickCount % 500 === 0) {
+        isWetSeason = !isWetSeason;
+        addLog(isWetSeason ? "WET SEASON" : "DRY SEASON", "elemental");
+    }
 
-function tick() {
-    for(let x=0; x<COLS; x++) {
-        for(let y=0; y<ROWS; y++) {
-            if (grid[x][y] && grid[x][y].char === '#') {
-                grid[x][y].timer--; if (grid[x][y].timer <= 0) grid[x][y] = null;
+    for (let x = 0; x < COLS; x++) {
+        for (let y = 0; y < ROWS; y++) {
+            let cell = grid[x][y];
+            if (!cell) continue;
+
+            // Fire + Water/Rain = Air
+            if (cell.char === '!' && isWetSeason && Math.random() < 0.2) {
+                grid[x][y] = { char: '"', color: '#ffffff', timer: 12 };
+            }
+
+            if (cell.char === '"' || cell.char === '%' || cell.char === '~' || cell.char === '#') {
+                cell.timer -= 1;
+                if (cell.timer <= 0) grid[x][y] = { char: '.', color: '#444' }; // Return to Rock
+            }
+
+            if (cell.char === '!') {
+                cell.timer--;
+                if (cell.timer <= 0) grid[x][y] = { char: '%', color: '#555', timer: 60 };
             }
         }
     }
+
+    // Rock spawning vines or trees
+    if (Math.random() < (isWetSeason ? 0.08 : 0.02)) {
+        let rx = Math.floor(Math.random()*COLS), ry = Math.floor(Math.random()*ROWS);
+        if (!grid[rx][ry] || grid[rx][ry].char === '.') {
+            grid[rx][ry] = { char: (Math.random() < 0.1 ? 'T' : 'v'), color: (Math.random() < 0.1 ? '#3d6a26' : '#2ecc71') };
+        }
+    }
+}
+
+function init() {
+    for(let i=0; i<400; i++) grid[Math.floor(Math.random()*COLS)][Math.floor(Math.random()*ROWS)] = { char: '.', color: '#444' };
+    for(let i=0; i<15; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'B', '#fff'));
+    for(let i=0; i<4; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaa'));
+    for(let i=0; i<8; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#90ee90'));
+}
+
+function tick() {
+    handleEnvironment();
     creatures.forEach(c => c.move());
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
@@ -187,16 +160,14 @@ function tick() {
         for (let y = 0; y < ROWS; y++) {
             let item = grid[x][y];
             if (item) {
-                ctx.fillStyle = item.color || '#fff';
+                ctx.fillStyle = item.color || '#2ecc71';
                 ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
             }
         }
     }
     setTimeout(tick, 100);
 }
-
-init();
-tick();
+init(); tick();
 </script>
 </body>
 </html>
