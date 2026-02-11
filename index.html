@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <title>Biology Sim</title>
     <style>
         body { background: #050505; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #b0f; }
         #main-container { display: flex; gap: 10px; border: 2px solid #442244; padding: 10px; background: #110011; }
         canvas { image-rendering: pixelated; background: #0a000a; border: 1px solid #663366; }
         #log-container { width: 260px; height: 480px; background: #000; border: 1px solid #331133; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; }
         .log-entry { margin-bottom: 2px; border-bottom: 1px solid #220022; padding: 2px; }
-        .fight { color: #ffa500; font-weight: bold; }
-        .panic { color: #00ff00; }
+        .virus { color: #bb00ff; font-weight: bold; }
+        .crash { color: #ff0000; text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -30,11 +31,6 @@ const ROWS = 30;
 let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
 let creatures = [];
 
-const colonies = [
-    {x: 4, y: 4, id: 1, color: '#ff99ff', qColor: '#ff00ff'},
-    {x: COLS-5, y: ROWS-5, id: 2, color: '#99ffff', qColor: '#00ffff'}
-];
-
 function addLog(text, type) {
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
@@ -44,75 +40,65 @@ function addLog(text, type) {
 }
 
 class Creature {
-    constructor(gx, gy, char, color, colony = null) {
+    constructor(gx, gy, char, color) {
         this.gx = gx; this.gy = gy;
-        this.char = char; this.baseColor = color; this.color = color;
-        this.colony = colony;
+        this.char = char; this.color = color;
         this.energy = (['P', 'V'].includes(char)) ? 300 : 160;
         this.thirst = 0;
         this.isInfected = false;
-        this.isImmune = false;
-        this.standingOn = null;
-        this.moveCooldown = 0;
         this.matingTimer = 0;
         grid[gx][gy] = this;
     }
 
     move() {
-        // Speed Logic: B is 1.5/sec (moves 2 out of 3 ticks)
-        if (this.char === 'B' && Math.random() < 0.33) return; 
-        if (this.char !== 'B' && this.moveCooldown > 0) { this.moveCooldown--; return; }
+        // Speed logic based on health
+        if (this.char === 'B') {
+            let speedThreshold = this.isInfected ? 0.66 : 0.33;
+            if (Math.random() < speedThreshold) return; 
+        } else if (this.char !== 'B' && Math.random() < 0.2) return;
 
-        let loss = (this.char === 'P' ? 0.4 : (this.char === 'V' ? 0.45 : 0.12));
-        if (this.isInfected) { this.color = "#bb00ff"; loss *= 2.5; }
+        let loss = (this.char === 'V' ? 0.7 : 0.15);
+        if (this.isInfected) { loss *= 2.5; this.color = "#bb00ff"; }
         
         this.energy -= loss;
-        this.thirst += 0.55;
+        this.thirst += 0.5;
 
         if (this.isNearWater()) this.thirst = Math.max(0, this.thirst - 20);
-        if (this.energy <= 0 || this.thirst >= 100) { this.die(); return; }
+        
+        // Vulture Crash Logic
+        if (this.energy <= 0 || this.thirst >= 100) {
+            if (this.char === 'V') addLog("Vulture crashed from sky", "crash");
+            this.die(); 
+            return; 
+        }
 
         let moveX = Math.floor(Math.random() * 3) - 1;
         let moveY = Math.floor(Math.random() * 3) - 1;
 
-        // BIRD PANIC LOGIC
-        if (this.char === 'B') {
-            let v = this.scan(2, (i) => i.char === 'V');
-            if (v) {
-                moveX = this.gx > v.gx ? 1 : -1;
-                moveY = this.gy > v.gy ? 1 : -1;
-            } else {
-                let target = this.scan(12, (i) => i.char === 'a' || i.char === '.' || i.char === '#');
-                if (target) {
-                    moveX = target.gx > this.gx ? 1 : (target.gx < this.gx ? -1 : 0);
-                    moveY = target.gy > this.gy ? 1 : (target.gy < this.gy ? -1 : 0);
-                }
-            }
-        }
+        let target = this.scan(12, (i) => {
+            if (this.char === 'V') return i.char === 'B' || (this.energy < 100 && i.char === '#');
+            if (this.char === 'B') return (this.thirst > 50 && i.char === '~') || (i.char === 'g');
+            return false;
+        });
 
-        // VULTURE HUNT/FIGHT
-        if (this.char === 'V') {
-            let otherV = this.scan(3, (i) => i.char === 'V' && i !== this);
-            if (otherV && creatures.filter(c => c.char === 'V').length > 3) {
-                moveX = otherV.gx > this.gx ? 1 : -1; // Move to fight
-                moveY = otherV.gy > this.gy ? 1 : -1;
-            } else {
-                let prey = this.scan(14, (i) => i.char === 'B' || i.char === '#' || (this.thirst > 60 && i.char === '~'));
-                if (prey) {
-                    moveX = prey.gx > this.gx ? 1 : (prey.gx < this.gx ? -1 : 0);
-                    moveY = prey.gy > this.gy ? 1 : (prey.gy < this.gy ? -1 : 0);
-                }
-            }
+        if (target) {
+            moveX = target.gx > this.gx ? 1 : (target.gx < this.gx ? -1 : 0);
+            moveY = target.gy > this.gy ? 1 : (target.gy < this.gy ? -1 : 0);
         }
 
         let tx = Math.max(0, Math.min(COLS - 1, this.gx + moveX));
         let ty = Math.max(0, Math.min(ROWS - 1, this.gy + moveY));
         const occupant = grid[tx][ty];
 
-        // Marsh slowness
-        if (['H', 'P', 'a'].includes(this.char) && occupant && occupant.char === '~') this.moveCooldown = 3;
+        // Infection Spread to land animals from corpses
+        if (['H', 'P', 'a'].includes(this.char) && occupant && occupant.char === '#' && occupant.isInfected) {
+            if (Math.random() < 0.5) {
+                this.isInfected = true;
+                addLog(this.char + " touched hot corpse", "virus");
+            }
+        }
 
-        if (!occupant || ['~', '.', '+', 'T', '#', 'g'].includes(occupant.char)) {
+        if (!occupant || ['~', '.', '#', 'g'].includes(occupant.char)) {
             this.updatePos(tx, ty, occupant);
         } else {
             this.handleCollision(occupant, tx, ty);
@@ -131,36 +117,32 @@ class Creature {
 
     handleCollision(target, tx, ty) {
         if (this.char === 'V' && target.char === 'V') {
-            if (creatures.filter(c => c.char === 'V').length > 4) {
-                this.energy -= 50; target.energy -= 50;
-                addLog("Vultures clashing over flock!", "fight");
+            if (creatures.filter(c => c.char === 'V').length > 5) {
+                this.energy -= 60; 
+                if (this.isInfected || target.isInfected) { this.isInfected = true; target.isInfected = true; }
+                addLog("Vultures clashing over flock!", "death");
             } else if (!this.isInfected && !target.isInfected) {
                 this.matingTimer++;
-                if (this.matingTimer > 10) {
+                if (this.matingTimer > 8) {
+                    creatures.push(new Creature(this.gx, this.gy, 'V', '#aaa'));
+                    addLog("Vulture population increased", "standard");
                     this.matingTimer = 0;
-                    creatures.push(new Creature(this.gx, this.gy, 'V', '#aaaaaa'));
-                    addLog("Vulture population increased", "mating");
                 }
             }
             return;
         }
 
-        let eaten = false;
-        if (this.char === 'V' && target.char === 'B') eaten = true;
-        if (this.char === 'P' && ['a', 'H', 'B'].includes(target.char)) eaten = true;
-        if (this.char === 'B' && target.char === 'a') eaten = true;
-
-        if (eaten) {
+        if (this.char === 'V' && (target.char === 'B' || target.char === 'H')) {
             this.energy += 120;
-            if (target instanceof Creature) this.removeCreature(target);
+            if (target.isInfected) this.isInfected = true;
+            if (target instanceof Creature) creatures = creatures.filter(c => c !== target);
             this.updatePos(tx, ty);
+            addLog("Vulture slurped a " + target.char, "standard");
         }
     }
 
     die() {
-        if (grid[this.gx][this.gy] === this) {
-            grid[this.gx][this.gy] = { char: '#', color: '#554433', gx: this.gx, gy: this.gy, timer: 150, isInfected: this.isInfected };
-        }
+        grid[this.gx][this.gy] = { char: '#', color: '#554433', isInfected: this.isInfected, timer: 120 };
         creatures = creatures.filter(c => c !== this);
     }
 
@@ -175,56 +157,37 @@ class Creature {
     }
 
     updatePos(nx, ny, occupant) {
-        grid[this.gx][this.gy] = this.standingOn || null;
+        grid[this.gx][this.gy] = null;
         this.gx = nx; this.gy = ny;
-        this.standingOn = (occupant && occupant.char !== undefined && !['#', 'g'].includes(occupant.char)) ? occupant : null;
         grid[this.gx][this.gy] = this;
-    }
-
-    removeCreature(obj) {
-        creatures = creatures.filter(c => c !== obj);
-        grid[obj.gx][obj.gy] = { char: '#', color: '#554433', gx: obj.gx, gy: obj.gy, timer: 80, isInfected: obj.isInfected };
     }
 }
 
 function init() {
-    for(let i=0; i<8; i++) {
-        let rx = Math.floor(Math.random()*COLS), ry = Math.floor(Math.random()*ROWS);
-        for(let j=0; j<6; j++) {
-            let wx = Math.max(0, Math.min(COLS-1, rx + (Math.floor(Math.random()*3)-1)));
-            let wy = Math.max(0, Math.min(ROWS-1, ry + (Math.floor(Math.random()*3)-1)));
-            grid[wx][wy] = {char: '~', color: '#1e90ff', gx: wx, gy: wy};
-        }
-    }
-    colonies.forEach(c => { creatures.push(new Creature(c.x, c.y, 'A', c.qColor, c)); });
-    for(let i=0; i<3; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'P', '#ff4444'));
-    for(let i=0; i<15; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'B', '#ffffff'));
-    for(let i=0; i<3; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaaaaa'));
-    for(let i=0; i<6; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#44ff44'));
-    creatures[0].isInfected = true;
+    for(let i=0; i<15; i++) grid[Math.floor(Math.random()*COLS)][Math.floor(Math.random()*ROWS)] = {char: '~', color: '#1e90ff'};
+    for(let i=0; i<15; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'B', '#fff'));
+    for(let i=0; i<4; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaa'));
+    for(let i=0; i<10; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#44ff44'));
+    for(let i=0; i<20; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'a', '#ff99ff'));
+    creatures[creatures.length-1].isInfected = true; 
 }
 
-function update() {
+function tick() {
     for(let x=0; x<COLS; x++) {
         for(let y=0; y<ROWS; y++) {
-            let cell = grid[x][y];
-            if (cell && cell.char === '#') {
-                cell.timer--; if (cell.timer <= 0) grid[x][y] = null;
+            if (grid[x][y] && grid[x][y].char === '#') {
+                grid[x][y].timer--; if (grid[x][y].timer <= 0) grid[x][y] = null;
             }
         }
     }
     creatures.forEach(c => c.move());
-}
-
-function tick() {
-    update();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
     for (let x = 0; x < COLS; x++) {
         for (let y = 0; y < ROWS; y++) {
             let item = grid[x][y];
             if (item) {
-                ctx.fillStyle = (item.char === '#' && item.isInfected) ? '#bb00ff' : (item.color || '#fff');
+                ctx.fillStyle = item.color || '#fff';
                 ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
             }
         }
