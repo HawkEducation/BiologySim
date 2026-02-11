@@ -7,9 +7,9 @@
         canvas { image-rendering: pixelated; background: #0a000a; display: block; border: 1px solid #663366; }
         #log-container { width: 260px; height: 480px; background: #000; border: 1px solid #331133; padding: 10px; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; }
         .log-entry { margin-bottom: 2px; border-bottom: 1px solid #220022; }
-        .extinction { color: #ff0000; font-weight: bold; background: #330000; }
-        .virus { color: #bb00ff; }
-        .immune { color: #ffff00; }
+        .vulture { color: #aaaaaa; font-weight: bold; }
+        .bird { color: #ffffff; }
+        .death { color: #ff4444; }
     </style>
 </head>
 <body>
@@ -31,6 +31,7 @@ const ROWS = 30;
 let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
 let creatures = [];
 let eggs = [];
+let birdNests = [];
 
 const colonies = [
     {x: 4, y: 4, id: 1, color: '#ff99ff', sColor: '#ff55cc', qColor: '#ff00ff'},
@@ -45,12 +46,24 @@ function addLog(text, type) {
     if (logEl.children.length > 25) logEl.removeChild(logEl.lastChild);
 }
 
+function isElevated(gx, gy) {
+    for (let x = -1; x <= 1; x++) {
+        for (let y = -1; y <= 1; y++) {
+            let nx = gx + x, ny = gy + y;
+            if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                if (grid[nx][ny] && grid[nx][ny].char === 'T') return true;
+            }
+        }
+    }
+    return false;
+}
+
 class Creature {
     constructor(gx, gy, char, color, colony = null) {
         this.gx = gx; this.gy = gy;
         this.char = char; this.baseColor = color; this.color = color;
         this.colony = colony;
-        this.energy = (char === 'P') ? 220 : 150;
+        this.energy = (char === 'P' || char === 'V') ? 250 : 150;
         this.isInfected = false;
         this.isImmune = false;
         this.standingOn = null;
@@ -58,10 +71,10 @@ class Creature {
     }
 
     move() {
-        let loss = (this.char === 'P' ? 0.4 : 0.03); // Slightly lowered P drain to help survival
+        let loss = (this.char === 'P' ? 0.45 : (this.char === 'V' ? 0.4 : (this.char === 'B' ? 0.35 : 0.04)));
         if (this.isInfected) {
             this.color = "#bb00ff";
-            if (this.char === 'P') loss *= 3;
+            if (['P', 'V', 'B'].includes(this.char)) loss *= 2.5;
         }
 
         this.energy -= loss;
@@ -70,11 +83,26 @@ class Creature {
         let moveX = Math.floor(Math.random() * 3) - 1;
         let moveY = Math.floor(Math.random() * 3) - 1;
 
-        if (this.char === 'P') {
-            let prey = this.scan(10, (i) => i.char === 'a' || i.char === 'H' || i.char === 's');
+        // BIRD FEAR: Run from Vultures
+        if (this.char === 'B') {
+            let threat = this.scan(5, (i) => i.char === 'V');
+            if (threat) {
+                moveX = (this.gx > threat.gx ? 1 : -1);
+                moveY = (this.gy > threat.gy ? 1 : -1);
+            }
+        }
+
+        // HUNTING LOGIC
+        if (['P', 'V', 'B'].includes(this.char)) {
+            let prey = this.scan(10, (i) => {
+                if (this.char === 'V') return i.char === 'B' || i.char === 'H';
+                if (this.char === 'P') return ['a', 's', 'H', 'B', 'V', 'o'].includes(i.char);
+                if (this.char === 'B') return i.char === 'a' || i.char === '.';
+                return false;
+            });
             if (prey) {
-                moveX = (prey.gx > this.gx ? 1 : prey.gx < this.gx ? -1 : 0);
-                moveY = (prey.gy > this.gy ? 1 : prey.gy < this.gy ? -1 : 0);
+                moveX = (prey.gx > this.gx ? 1 : -1);
+                moveY = (prey.gy > this.gy ? 1 : -1);
             }
         }
 
@@ -82,36 +110,40 @@ class Creature {
         let ty = Math.max(0, Math.min(ROWS - 1, this.gy + moveY));
         const target = grid[tx][ty];
 
-        // Fear of water
-        if (target && target.char === '~' && this.char !== 'P') {
-            if (Math.random() < 0.9) return;
+        // FLIGHT LOGIC: B and V can fly over water/trees
+        if (!['B', 'V'].includes(this.char) && target && (target.char === '~' || target.char === 'T')) {
+            if (this.char === 'P' || Math.random() < 0.95) return;
         }
 
-        if (!target || target.char === '~' || target.char === '.' || target.char === 'f' || target.char === '+') {
-            if (this.char === 'P' && target && target.char === '~') return;
+        if (!target || ['~', '.', 'f', '+', 'T'].includes(target.char)) {
             if (target && target.char === '+') { this.cure(); grid[tx][ty] = null; }
             this.updatePos(tx, ty, target);
-        } else if (target instanceof Creature) {
-            if ((this.isInfected || target.isInfected) && (!this.isImmune && !target.isImmune)) {
-                this.isInfected = true; target.isInfected = true;
-            }
+        } else {
             this.handleCollision(target, tx, ty);
         }
     }
 
-    cure() {
-        this.isInfected = false;
-        this.isImmune = true;
-        this.color = "#ffff00";
-    }
-
     handleCollision(target, tx, ty) {
-        if (this.char === 'P' && (target.char === 'a' || target.char === 'H' || target.char === 's')) {
-            this.energy += 100;
+        if (target instanceof Creature && (this.isInfected || target.isInfected) && !this.isImmune && !target.isImmune) {
+            this.isInfected = true; target.isInfected = true;
+        }
+
+        let canEat = false;
+        if (this.char === 'V' && ['B', 'H'].includes(target.char)) canEat = true;
+        if (this.char === 'P' && ['a', 's', 'H', 'B', 'V'].includes(target.char)) canEat = true;
+        if (this.char === 'B' && ['a', 'H'].includes(target.char)) canEat = true;
+
+        if (canEat) {
+            // Safety check for elevated eggs/nests (handled separately)
+            if (target.standingOn && target.standingOn.char === '~' && !['B', 'V'].includes(this.char)) return;
+            this.energy += 90;
             this.removeCreature(target);
             this.updatePos(tx, ty);
+            if (this.char === 'V') addLog("Vulture caught a Bird", "vulture");
         }
     }
+
+    cure() { this.isInfected = false; this.isImmune = true; this.color = "#ffff00"; }
 
     scan(dist, check) {
         for (let x = -dist; x <= dist; x++) {
@@ -130,7 +162,7 @@ class Creature {
         grid[this.gx][this.gy] = this.standingOn || null;
         this.gx = nx; this.gy = ny;
         this.standingOn = (occupant && occupant.char !== undefined) ? occupant : null;
-        if (this.standingOn && this.standingOn.char === '~' && Math.random() < 0.2) {
+        if (!['B', 'V'].includes(this.char) && this.standingOn && this.standingOn.char === '~' && Math.random() < 0.3) {
             this.energy = 0; addLog(`${this.char} drowned`, 'death');
         }
         grid[this.gx][this.gy] = this;
@@ -142,88 +174,62 @@ class Creature {
     }
 }
 
-function generateLakes(totalTiles) {
-    let tilesPlaced = 0;
-    while (tilesPlaced < totalTiles) {
-        let rx = Math.floor(Math.random() * COLS);
-        let ry = Math.floor(Math.random() * ROWS);
-        let lakeSize = Math.floor(Math.random() * 6) + 3;
-        for (let i = 0; i < lakeSize && tilesPlaced < totalTiles; i++) {
-            if (!grid[rx][ry]) { grid[rx][ry] = { char: '~', color: '#1e90ff' }; tilesPlaced++; }
-            rx = Math.max(0, Math.min(COLS-1, rx + (Math.floor(Math.random()*3)-1)));
-            ry = Math.max(0, Math.min(ROWS-1, ry + (Math.floor(Math.random()*3)-1)));
-        }
-    }
-}
-
 function spawnStatic(char, color, count) {
     for (let i = 0; i < count; i++) {
         let rx = Math.floor(Math.random() * COLS);
         let ry = Math.floor(Math.random() * ROWS);
-        if (!grid[rx][ry]) grid[rx][ry] = { char, color };
+        if (!grid[rx][ry]) grid[rx][ry] = { char, color, gx: rx, gy: ry };
     }
-}
-
-function findSafeSpot() {
-    let rx, ry, attempts = 0;
-    do {
-        rx = Math.floor(Math.random() * COLS);
-        ry = Math.floor(Math.random() * ROWS);
-        attempts++;
-    } while (grid[rx][ry] && grid[rx][ry].char === '~' && attempts < 100);
-    return {x: rx, y: ry};
 }
 
 function init() {
-    generateLakes(60);
-    spawnStatic('+', '#00ff00', 8);
-    colonies.forEach(c => { 
-        let spot = findSafeSpot();
-        creatures.push(new Creature(spot.x, spot.y, 'A', c.qColor, c)); 
-    });
-    for(let i=0; i<3; i++) { let s = findSafeSpot(); creatures.push(new Creature(s.x, s.y, 'P', '#ff4444')); }
-    for(let i=0; i<8; i++) { let s = findSafeSpot(); creatures.push(new Creature(s.x, s.y, 'H', '#44ff44')); }
-    creatures[creatures.length-1].isInfected = true; 
+    for(let i=0; i<70; i++) {
+        let rx = Math.floor(Math.random()*COLS), ry = Math.floor(Math.random()*ROWS);
+        grid[rx][ry] = {char: '~', color: '#1e90ff'};
+    }
+    spawnStatic('T', '#228b22', 15);
+    spawnStatic('+', '#00ff00', 5);
+    colonies.forEach(c => { creatures.push(new Creature(c.x, c.y, 'A', c.qColor, c)); });
+    for(let i=0; i<3; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'P', '#ff4444'));
+    for(let i=0; i<5; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'B', '#ffffff'));
+    for(let i=0; i<2; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaaaaa'));
+    creatures[creatures.length-1].isInfected = true;
 }
 
 function update() {
-    // RE-POPULATION LOGIC (Prevents permanent mass extinction)
-    if (creatures.filter(c => c.char === 'P').length === 0 && Math.random() < 0.01) {
-        let s = findSafeSpot(); creatures.push(new Creature(s.x, s.y, 'P', '#ff4444'));
-        addLog("Predators re-emerged", "extinction");
-    }
-    if (creatures.filter(c => c.char === 'H').length === 0 && Math.random() < 0.01) {
-        let s = findSafeSpot(); creatures.push(new Creature(s.x, s.y, 'H', '#44ff44'));
-        addLog("Herbivores re-emerged", "extinction");
-    }
-
-    eggs = eggs.filter(egg => {
-        egg.timer--;
-        if (egg.timer <= 0) {
-            for(let i=0; i<2; i++) {
-                let rx = Math.max(0, Math.min(COLS-1, egg.gx + (Math.floor(Math.random()*3)-1)));
-                let ry = Math.max(0, Math.min(ROWS-1, egg.gy + (Math.floor(Math.random()*3)-1)));
-                if (!grid[rx][ry] || grid[rx][ry].char !== '~') creatures.push(new Creature(rx, ry, 'a', egg.colony.color, egg.colony));
+    // Bird Nesting
+    creatures.forEach(c => {
+        if (c.char === 'B' && c.energy > 120 && Math.random() < 0.01) {
+            let tree = c.scan(2, (i) => i.char === 'T');
+            if (tree) {
+                let nx = tree.gx + (Math.floor(Math.random()*3)-1);
+                let ny = tree.gy + (Math.floor(Math.random()*3)-1);
+                if (nx>=0 && nx<COLS && ny>=0 && ny<ROWS && !grid[nx][ny]) {
+                    grid[nx][ny] = { char: 'n', color: '#d2b48c' };
+                    birdNests.push({gx: nx, gy: ny});
+                }
             }
-            grid[egg.gx][egg.gy] = null; return false;
         }
-        return true;
     });
 
+    // Nest hatching
+    birdNests.forEach((nest, idx) => {
+        if (grid[nest.gx][nest.gy] && grid[nest.gx][nest.gy].char === 'n' && Math.random() < 0.005) {
+            creatures.push(new Creature(nest.gx, nest.gy, 'B', '#ffffff'));
+        }
+    });
+
+    // Respawn Vultures
+    if (creatures.filter(c => c.char === 'V').length < 2 && Math.random() < 0.005) {
+        creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaaaaa'));
+    }
+
+    // Colony growth
     colonies.forEach(col => {
         const queen = creatures.find(c => c.char === 'A' && c.colony === col);
-        if (queen && queen.energy > 80 && creatures.length < 150) {
-            let ex = Math.max(0, Math.min(COLS-1, queen.gx + (Math.floor(Math.random()*3)-1)));
-            let ey = Math.max(0, Math.min(ROWS-1, queen.gy + (Math.floor(Math.random()*3)-1)));
-            if (!grid[ex][ey]) {
-                queen.energy -= 45;
-                let newEgg = { gx: ex, gy: ey, char: '-', color: '#eee', timer: 15, colony: col };
-                grid[ex][ey] = newEgg; eggs.push(newEgg);
-            }
-        } else if (!creatures.some(c => c.colony === col) && Math.random() < 0.005) {
-            let s = findSafeSpot();
-            creatures.push(new Creature(s.x, s.y, 'A', col.qColor, col));
-            addLog(`Colony ${col.id} Restarted`, 'immune');
+        if (queen && queen.energy > 80 && creatures.filter(c => c.colony === col).length < 20) {
+            queen.energy -= 40;
+            creatures.push(new Creature(queen.gx, queen.gy, 'a', col.color, col));
         }
     });
 
@@ -231,10 +237,7 @@ function update() {
         if (c.energy <= 0) { grid[c.gx][c.gy] = c.standingOn || null; return false; }
         c.move(); return true;
     });
-
-    if (Math.random() < 0.15) spawnStatic('.', '#0a0', 1);
-    if (Math.random() < 0.08) spawnStatic('f', '#d2b48c', 1);
-    if (Math.random() < 0.005) spawnStatic('+', '#00ff00', 1);
+    if (Math.random() < 0.1) spawnStatic('.', '#0a0', 1);
 }
 
 function tick() {
@@ -250,7 +253,7 @@ function tick() {
             }
         }
     }
-    setTimeout(tick, 60);
+    setTimeout(tick, 100);
 }
 
 init();
