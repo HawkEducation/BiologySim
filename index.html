@@ -2,17 +2,27 @@
 <html>
 <head>
     <style>
-        body { background: #0a1205; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #aaffaa; }
-        #main-container { display: flex; gap: 10px; border: 2px solid #2d4c1e; padding: 10px; background: #0f1a09; }
+        body { background: #0a1205; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #aaffaa; }
+        #main-container { display: flex; gap: 10px; border: 2px solid #2d4c1e; padding: 10px; background: #0f1a09; position: relative; }
         canvas { image-rendering: pixelated; background: #1a2e12; border: 1px solid #3d6a26; }
+        #ui-top { position: absolute; top: -45px; left: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 14px; }
         #log-container { width: 260px; height: 500px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; }
         .log-entry { margin-bottom: 2px; border-bottom: 1px solid #1a2e12; padding: 2px; }
-        .elemental { color: #5dade2; font-weight: bold; }
+        button { background: #1a2e12; color: #aaffaa; border: 1px solid #3d6a26; cursor: pointer; padding: 4px 10px; font-family: inherit; }
+        button.active { background: #ff4444; color: #000; font-weight: bold; }
+        .stat-box { margin-left: 15px; color: #00ffff; }
     </style>
 </head>
 <body>
-
 <div id="main-container">
+    <div id="ui-top">
+        <div>
+            <button id="toggle-play" onclick="togglePlay()">PLAY MODE: OFF</button>
+            <span id="energy-ui" class="stat-box" style="display:none;">ENERGY: 400</span>
+            <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 0</span>
+        </div>
+        <span id="season-ui">SEASON: WET</span>
+    </div>
     <canvas id="simCanvas" width="640" height="480"></canvas>
     <div id="log-container"></div>
 </div>
@@ -28,139 +38,204 @@ const ROWS = 30;
 
 let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
 let creatures = [];
+let player = null;
 let tickCount = 0;
 let isWetSeason = true;
+let isPlayMode = false;
 
-function addLog(text, type) {
+function togglePlay() {
+    isPlayMode = !isPlayMode;
+    const btn = document.getElementById('toggle-play');
+    const energyDisp = document.getElementById('energy-ui');
+    const rockDisp = document.getElementById('rock-ui');
+    if (isPlayMode) {
+        btn.innerText = "PLAY MODE: ON"; btn.classList.add('active');
+        energyDisp.style.display = "inline"; rockDisp.style.display = "inline";
+        spawnPlayer();
+        addLog("Fortress construction enabled. Find a Tree (T)!");
+    } else {
+        btn.innerText = "PLAY MODE: OFF"; btn.classList.remove('active');
+        energyDisp.style.display = "none"; rockDisp.style.display = "none";
+        removePlayer();
+    }
+}
+
+function spawnPlayer() {
+    let attempts = 0;
+    while(attempts < 100) {
+        let rx = Math.floor(Math.random() * COLS), ry = Math.floor(Math.random() * ROWS);
+        if (grid[rx][ry] && grid[rx][ry].char === '.') { player = new Player(rx, ry); break; }
+        attempts++;
+    }
+}
+
+function removePlayer() { if (player) { grid[player.gx][player.gy] = player.standingOn || { char: '.', color: '#444' }; player = null; } }
+
+function addLog(text) {
     const entry = document.createElement('div');
-    entry.className = `log-entry ${type}`;
     entry.innerText = `> ${text}`;
     logEl.prepend(entry);
     if (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
 }
 
-class Creature {
+class Entity {
     constructor(gx, gy, char, color) {
         this.gx = gx; this.gy = gy;
         this.char = char; this.baseColor = color; this.color = color;
-        this.energy = (char === 'V') ? 300 : (char === 'P' ? 450 : 180);
-        this.isDamp = false; this.moveCooldown = 0;
+        this.energy = 200; this.standingOn = grid[gx][gy];
         grid[gx][gy] = this;
     }
+    updatePos(nx, ny) {
+        let occ = grid[nx][ny];
+        // Walls and Rocks are solid
+        if (occ && (occ.char === 'W' || occ.char === 'O')) return; 
+        // Door is only for player
+        if (occ && occ.char === 'D' && this.char !== 'p') return;
 
-    move() {
-        if (this.moveCooldown > 0) { this.moveCooldown--; return; }
-        
-        // Air interaction
-        let inAir = this.scan(0, (i) => i.char === '"');
-        if (inAir) this.isDamp = true; // Air (Steam) dampens the creature
-
-        let fire = this.scan(2, (i) => i.char === '!');
-        if (fire) {
-            if (this.isDamp) {
-                this.isDamp = false; // Shield used
-                addLog(this.char + " shield used!", "elemental");
-            } else {
-                let dx = this.gx > fire.gx ? 1 : -1;
-                let dy = this.gy > fire.gy ? 1 : -1;
-                this.updatePos(Math.max(0, Math.min(COLS-1, this.gx+dx)), Math.max(0, Math.min(ROWS-1, this.gy+dy)));
-                return;
-            }
-        }
-        
-        this.energy -= (this.char === 'V' ? 1.1 : 0.3);
-        if (this.isDamp) this.color = "#00ffff"; else this.color = this.baseColor;
-
-        if (this.energy <= 0) { this.die(); return; }
-
-        let tx = Math.max(0, Math.min(COLS - 1, this.gx + (Math.floor(Math.random() * 3) - 1)));
-        let ty = Math.max(0, Math.min(ROWS - 1, this.gy + (Math.floor(Math.random() * 3) - 1)));
-        const occupant = grid[tx][ty];
-
-        if (!occupant || ['v', 'f', '~', '#', '!', '%', 'T', '"', '.'].includes(occupant.char)) {
-            if (occupant && occupant.char === '!' && !this.isDamp) { this.die(); return; }
-            this.updatePos(tx, ty, occupant);
-        }
-    }
-
-    die() {
-        grid[this.gx][this.gy] = { char: '#', color: '#554433', timer: 80 };
-        creatures = creatures.filter(c => c !== this);
-    }
-
-    scan(dist, check) {
-        for (let x = -dist; x <= dist; x++) {
-            for (let y = -dist; y <= dist; y++) {
-                let nx = this.gx + x, ny = this.gy + y;
-                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && grid[nx][ny] && check(grid[nx][ny])) return {gx:nx, gy:ny};
-            }
-        }
-        return null;
-    }
-
-    updatePos(nx, ny, occupant) {
-        grid[this.gx][this.gy] = (this.standingOn && ['v','f','%','T','"', '.'].includes(this.standingOn.char)) ? this.standingOn : null;
+        grid[this.gx][this.gy] = (this.standingOn && ['y','v','f','%','T','"', '.', 'W', '|', 'D', 'O'].includes(this.standingOn.char)) ? this.standingOn : { char: '.', color: '#444' };
         this.gx = nx; this.gy = ny;
-        this.standingOn = (occupant && ['v','f','%','T','"', '.'].includes(occupant.char)) ? occupant : null;
+        this.standingOn = (occ && ['y','v','f','%','T','"', '.', 'W', '|', 'D', 'O'].includes(occ.char)) ? occ : { char: '.', color: '#444' };
         grid[this.gx][this.gy] = this;
+    }
+}
+
+class Player extends Entity {
+    constructor(gx, gy) { super(gx, gy, 'p', '#ff4444'); this.energy = 400; this.rocks = 0; }
+    handleInput(key) {
+        if (key === " ") { this.placeWall(); return; }
+        let nx = this.gx, ny = this.gy;
+        if (key === "ArrowUp") ny--; if (key === "ArrowDown") ny++;
+        if (key === "ArrowLeft") nx--; if (key === "ArrowRight") nx++;
+        nx = Math.max(0, Math.min(COLS - 1, nx)); ny = Math.max(0, Math.min(ROWS - 1, ny));
+        let target = grid[nx][ny];
+
+        if (target && target.char === '.') {
+            if (this.rocks < 10) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; }
+        }
+        if (target && target.char === 'T') { this.buildFortress(nx, ny); return; }
+        if (target instanceof NPC) { this.energy += 150; addLog("p fed."); creatures = creatures.filter(c => c !== target); }
+        if (target && target.char === '!') { this.die(); return; }
+        
+        this.energy -= 0.5; 
+        this.updatePos(nx, ny);
+    }
+    placeWall() {
+        if (this.rocks > 0) {
+            this.standingOn = { char: 'O', color: '#888', isRock: true };
+            this.rocks--;
+            addLog("Reinforced tile.");
+        }
+    }
+    buildFortress(cx, cy) {
+        // Blueprint Matrix (5x5 center)
+        // . O O O .
+        // O W W W O
+        // O W | W O
+        // . O D O .
+        // . . O . .
+        const blueprint = [
+            [null, 'O', 'O', 'O', null],
+            ['O', 'W', 'W', 'W', 'O'],
+            ['O', 'W', '|', 'W', 'O'],
+            [null, 'O', 'D', 'O', null],
+            [null, null, 'O', null, null]
+        ];
+
+        if (cx < 2 || cx >= COLS - 2 || cy < 2 || cy >= ROWS - 3) {
+            addLog("Not enough space to build!");
+            return;
+        }
+
+        for(let j = 0; j < 5; j++) {
+            for(let i = 0; i < 5; i++) {
+                let tx = cx - 2 + i;
+                let ty = cy - 2 + j;
+                let type = blueprint[j][i];
+                if (type) {
+                    let color = '#888'; // Default Rock
+                    if (type === 'W') color = '#8B4513';
+                    if (type === '|') color = '#87CEEB';
+                    if (type === 'D') color = '#A52A2A';
+                    grid[tx][ty] = { char: type, color: color, burnHeat: 0, isRock: (type === 'O') };
+                }
+            }
+        }
+        addLog("Fortress Complete.");
+    }
+    die() { addLog("p perished."); this.energy = 0; togglePlay(); }
+}
+
+class NPC extends Entity {
+    move() {
+        this.energy -= 0.4; if (this.energy <= 0) { this.die(); return; }
+        let moveX = Math.floor(Math.random() * 3) - 1, moveY = Math.floor(Math.random() * 3) - 1;
+        let nx = Math.max(0, Math.min(COLS - 1, this.gx + moveX)), ny = Math.max(0, Math.min(ROWS - 1, this.gy + moveY));
+        let target = grid[nx][ny];
+        // NPCs can't go in Door or hit Walls/Rocks
+        if (!target || ['.','y','v'].includes(target.char)) {
+            if (target && (target.char === 'y' || target.char === 'v')) this.energy += 30;
+            this.updatePos(nx, ny);
+        }
+    }
+    die() {
+        if (this.standingOn && this.standingOn.char === 'y') grid[this.gx][this.gy] = { char: 'T', color: '#3d6a26' }; 
+        else grid[this.gx][this.gy] = { char: '#', color: '#554433', timer: 50 };
+        creatures = creatures.filter(c => c !== this);
     }
 }
 
 function handleEnvironment() {
     tickCount++;
-    if (tickCount % 500 === 0) {
-        isWetSeason = !isWetSeason;
-        addLog(isWetSeason ? "WET SEASON" : "DRY SEASON", "elemental");
-    }
+    if (tickCount % 400 === 0) isWetSeason = !isWetSeason;
+    document.getElementById('season-ui').innerText = "SEASON: " + (isWetSeason ? "WET" : "DRY");
 
     for (let x = 0; x < COLS; x++) {
         for (let y = 0; y < ROWS; y++) {
-            let cell = grid[x][y];
-            if (!cell) continue;
-
-            // Fire + Water/Rain = Air
-            if (cell.char === '!' && isWetSeason && Math.random() < 0.2) {
-                grid[x][y] = { char: '"', color: '#ffffff', timer: 12 };
-            }
-
-            if (cell.char === '"' || cell.char === '%' || cell.char === '~' || cell.char === '#') {
-                cell.timer -= 1;
-                if (cell.timer <= 0) grid[x][y] = { char: '.', color: '#444' }; // Return to Rock
-            }
-
+            let cell = grid[x][y]; if (!cell || cell instanceof Entity) continue;
             if (cell.char === '!') {
-                cell.timer--;
-                if (cell.timer <= 0) grid[x][y] = { char: '%', color: '#555', timer: 60 };
+                let nx = x + (Math.floor(Math.random()*3)-1), ny = y + (Math.floor(Math.random()*3)-1);
+                if (nx>=0 && nx<COLS && ny>=0 && ny<ROWS && grid[nx][ny]) {
+                    let t = grid[nx][ny];
+                    if (['y','v'].includes(t.char)) grid[nx][ny] = { char: '!', color: '#ff4500', timer: 15 };
+                    if (['W', 'T', 'D', '|'].includes(t.char)) {
+                        t.burnHeat = (t.burnHeat || 0) + 1;
+                        if (t.burnHeat > 25) grid[nx][ny] = { char: '!', color: '#ff4500', timer: 20 };
+                    }
+                }
+                cell.timer--; if (cell.timer <= 0) grid[x][y] = { char: '%', color: '#555', timer: 40 };
             }
+            if (['%', '"', '#'].includes(cell.char)) { cell.timer--; if (cell.timer <= 0) grid[x][y] = { char: '.', color: '#444' }; }
         }
     }
-
-    // Rock spawning vines or trees
-    if (Math.random() < (isWetSeason ? 0.08 : 0.02)) {
+    if (Math.random() < (isWetSeason ? 0.1 : 0.02)) {
         let rx = Math.floor(Math.random()*COLS), ry = Math.floor(Math.random()*ROWS);
-        if (!grid[rx][ry] || grid[rx][ry].char === '.') {
-            grid[rx][ry] = { char: (Math.random() < 0.1 ? 'T' : 'v'), color: (Math.random() < 0.1 ? '#3d6a26' : '#2ecc71') };
-        }
+        if (grid[rx][ry] && grid[rx][ry].char === '.') grid[rx][ry] = { char: 'y', color: '#a2d149' };
     }
 }
 
 function init() {
-    for(let i=0; i<400; i++) grid[Math.floor(Math.random()*COLS)][Math.floor(Math.random()*ROWS)] = { char: '.', color: '#444' };
-    for(let i=0; i<15; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'B', '#fff'));
-    for(let i=0; i<4; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'V', '#aaa'));
-    for(let i=0; i<8; i++) creatures.push(new Creature(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'H', '#90ee90'));
+    for(let i=0; i<COLS; i++) for(let j=0; j<ROWS; j++) grid[i][j] = { char: '.', color: '#444' };
+    for(let i=0; i<15; i++) creatures.push(new NPC(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'm', '#90ee90'));
 }
 
+window.addEventListener("keydown", (e) => { if (player) player.handleInput(e.key); });
+
 function tick() {
-    handleEnvironment();
-    creatures.forEach(c => c.move());
+    if (player) {
+        if (player.standingOn && player.standingOn.char === '|') { } 
+        else player.energy -= 0.6;
+        document.getElementById('energy-ui').innerText = "ENERGY: " + Math.floor(player.energy);
+        document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks;
+        if (player.energy <= 0) player.die();
+    }
+    handleEnvironment(); creatures.forEach(c => c.move());
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
     for (let x = 0; x < COLS; x++) {
         for (let y = 0; y < ROWS; y++) {
             let item = grid[x][y];
             if (item) {
-                ctx.fillStyle = item.color || '#2ecc71';
+                ctx.fillStyle = (item === player && player.standingOn && player.standingOn.char === '|') ? "#fff" : (item.color || '#2ecc71');
                 ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
             }
         }
