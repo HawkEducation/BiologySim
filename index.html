@@ -1,34 +1,35 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>41-Rock Oasis | Build #17 Leaderboard</title>
+    <title>41-Rock Oasis | Build #17.4 Standardized</title>
     <style>
         body { background: #0a1205; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #aaffaa; }
         #main-container { display: flex; gap: 10px; border: 2px solid #2d4c1e; padding: 10px; background: #0f1a09; position: relative; }
         canvas { image-rendering: pixelated; background: #1a2e12; border: 1px solid #3d6a26; }
         #ui-top { position: absolute; top: -45px; left: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 14px; }
         #side-panel { width: 260px; display: flex; flex-direction: column; gap: 10px; }
-        #log-container { height: 300px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; padding: 5px; }
-        #leaderboard { height: 180px; background: #0a1a0a; border: 1px solid #00ff00; font-size: 12px; padding: 5px; color: #ffff00; overflow-y: auto; }
+        #leaderboard { height: 220px; background: #0a1a0a; border: 1px solid #00ff00; font-size: 11px; padding: 8px; color: #ffff00; overflow-y: auto; line-height: 1.4; }
+        #log-container { height: 220px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; padding: 5px; }
         button { background: #1a2e12; color: #aaffaa; border: 1px solid #3d6a26; cursor: pointer; padding: 4px 10px; font-family: inherit; }
-        button.active { background: #ff4444; color: #000; font-weight: bold; }
+        #admin-btn { background: #441111; color: #ffaaaa; border: 1px solid #ff4444; margin-top: 5px; font-size: 10px; display: none; }
         .stat-box { margin-left: 15px; color: #00ffff; }
-        #timer-ui { color: #ff00ff; }
+        .category-tag { font-size: 9px; color: #ff4444; margin-left: 5px; font-weight: bold; }
     </style>
 </head>
 <body>
 <div id="main-container">
     <div id="ui-top">
         <div>
-            <button id="toggle-play" onclick="togglePlay()">START GAME</button>
-            <span id="energy-ui" class="stat-box" style="display:none;">ENERGY: 400</span>
-            <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 10/50</span>
+            <button onclick="togglePlay()">START</button>
+            <span id="energy-ui" class="stat-box" style="display:none;">NRG: 400</span>
+            <span id="rock-ui" class="stat-box" style="display:none;">RCK: 10</span>
         </div>
-        <span id="timer-ui">TIME: 0.0s</span>
+        <span id="timer-ui" style="color:#ff00ff">TIME: 0.00s</span>
     </div>
     <canvas id="simCanvas" width="640" height="480"></canvas>
     <div id="side-panel">
-        <div id="leaderboard">-- LEADERBOARD --</div>
+        <div id="leaderboard">-- HALL OF FAME --</div>
+        <button id="admin-btn" onclick="clearLeaderboard()">CLEAR ALL RECORDS</button>
         <div id="log-container"></div>
     </div>
 </div>
@@ -38,40 +39,44 @@ const canvas = document.getElementById('simCanvas');
 const ctx = canvas.getContext('2d');
 const logEl = document.getElementById('log-container');
 const lbEl = document.getElementById('leaderboard');
+const adminBtn = document.getElementById('admin-btn');
 const CELL_SIZE = 16; const COLS = 40; const ROWS = 30;
 
 let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
-let player = null;
-let isPlayMode = false;
-let startTime = 0;
-let finalTime = null;
-let beacons = [];
-let username = "Guest";
-let leaderboard = [];
+let player = null, isPlayMode = false, startTime = 0, finalTime = null;
+let beacons = [], username = "Guest", leaderboard = [], isTest = false;
+
+window.onload = () => {
+    const saved = localStorage.getItem('oasis_lb');
+    if (saved) { leaderboard = JSON.parse(saved); renderLeaderboard(); }
+};
 
 function togglePlay() {
     if (isPlayMode) { location.reload(); return; }
-    
-    username = prompt("Enter Username:", "Hawk") || "Guest";
+    let entry = prompt("Enter Username:", "Hawk");
+    if (entry === null) return;
+    username = entry || "Guest";
+    isTest = (username.toLowerCase() === "test");
     isPlayMode = true;
     
-    document.getElementById('toggle-play').innerText = "RESET";
+    if (isTest) adminBtn.style.display = "block";
+    
     document.getElementById('energy-ui').style.display = "inline";
     document.getElementById('rock-ui').style.display = "inline";
-    
     startTime = Date.now();
-    finalTime = null;
     init();
-    
     player = new Player(20, 15);
-    
-    // THE "TEST" CHEAT
-    if (username.toLowerCase() === "test") {
-        player.rocks = 41;
-        addLog("Cheat Detected: 41 Rocks Granted.");
+    if (isTest) { player.rocks = 41; addLog("ENVIRONMENT: TEST PROTOCOL ACTIVE."); }
+}
+
+function clearLeaderboard() {
+    if (!isTest) return;
+    if (confirm("Purge Hall of Fame database?")) {
+        leaderboard = [];
+        localStorage.removeItem('oasis_lb');
+        renderLeaderboard();
+        addLog("RECORDS CLEARED BY TEST ADMIN.");
     }
-    
-    addLog(`Welcome, ${username}!`);
 }
 
 function addLog(text) {
@@ -80,38 +85,35 @@ function addLog(text) {
     logEl.prepend(entry);
 }
 
-function updateLeaderboard(name, time) {
-    leaderboard.push({name, time: parseFloat(time)});
+function renderLeaderboard() {
+    if (leaderboard.length === 0) { lbEl.innerHTML = "-- HALL OF FAME --<br>No records."; return; }
+    lbEl.innerHTML = "-- HALL OF FAME --<br>" + 
+        leaderboard.slice(0, 12).map((e, i) => 
+            `${i+1}. ${e.name}: <b>${e.time.toFixed(2)}s</b> ${e.isTestEntry ? '<span class="category-tag">[TEST]</span>' : ''}`
+        ).join("<br>");
+}
+
+function updateLeaderboard(name, time, testStatus) {
+    leaderboard.push({name, time: parseFloat(time), isTestEntry: testStatus});
     leaderboard.sort((a, b) => a.time - b.time);
-    lbEl.innerHTML = "-- LEADERBOARD --<br>" + 
-        leaderboard.slice(0, 8).map((e, i) => `${i+1}. ${e.name}: ${e.time}s`).join("<br>");
+    localStorage.setItem('oasis_lb', JSON.stringify(leaderboard));
+    renderLeaderboard();
 }
 
 class Player {
-    constructor(gx, gy) {
-        this.gx = gx; this.gy = gy;
-        this.energy = 400; this.rocks = 10;
-    }
+    constructor(gx, gy) { this.gx = gx; this.gy = gy; this.energy = 400; this.rocks = 10; }
     move(dx, dy) {
-        let nx = Math.max(0, Math.min(COLS - 1, this.gx + dx));
-        let ny = Math.max(0, Math.min(ROWS - 1, this.gy + dy));
-        let target = grid[nx][ny];
-        if (target && ['W','O','D'].includes(target.char)) return;
-        if (target && target.char === '.') {
+        let nx = Math.max(0, Math.min(COLS - 1, this.gx + dx)), ny = Math.max(0, Math.min(ROWS - 1, this.gy + dy));
+        if (grid[nx][ny] && ['W','O','D'].includes(grid[nx][ny].char)) return;
+        if (grid[nx][ny] && grid[nx][ny].char === '.') {
             if (this.rocks < 50) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; }
         }
         this.gx = nx; this.gy = ny;
     }
-    buildFortress() {
+    build() {
         if (this.rocks >= 41 && !finalTime) {
             this.rocks -= 41;
-            const blueprint = [
-                [null, 'O', 'O', 'O', null],
-                ['O', 'W', 'e', 'W', 'O'],
-                ['O', 'W', '|', 'W', 'O'],
-                ['O', 'B', 'D', 'W', 'O'],
-                [null, 'O', null, 'O', null]
-            ];
+            const blueprint = [[null, 'O', 'O', 'O', null], ['O', 'W', 'e', 'W', 'O'], ['O', 'W', '|', 'W', 'O'], ['O', 'B', 'D', 'W', 'O'], [null, 'O', null, 'O', null]];
             for(let j=0; j<5; j++) for(let i=0; i<5; i++) {
                 let tx = this.gx - 2 + i, ty = this.gy - 2 + j;
                 if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS && blueprint[j][i]) {
@@ -121,15 +123,13 @@ class Player {
                 }
             }
             finalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-            addLog(`Victory! Time: ${finalTime}s`);
-            updateLeaderboard(username, finalTime);
+            addLog(`V-CORE STABLE: ${finalTime}s`);
+            updateLeaderboard(username, finalTime, isTest);
         }
     }
 }
 
-function init() {
-    for(let i=0; i<COLS; i++) for(let j=0; j<ROWS; j++) grid[i][j] = { char: '.', color: '#444' };
-}
+function init() { for(let i=0; i<COLS; i++) for(let j=0; j<ROWS; j++) grid[i][j] = { char: '.', color: '#444' }; }
 
 window.addEventListener("keydown", (e) => {
     if (!player || !isPlayMode) return;
@@ -137,38 +137,30 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") player.move(0, 1);
     if (e.key === "ArrowLeft") player.move(-1, 0);
     if (e.key === "ArrowRight") player.move(1, 0);
-    if (e.key.toLowerCase() === "t") player.buildFortress();
+    if (e.key.toLowerCase() === "t") player.build();
 });
 
 function tick() {
     if (isPlayMode && player) {
-        if (!finalTime) document.getElementById('timer-ui').innerText = "TIME: " + ((Date.now() - startTime) / 1000).toFixed(1) + "s";
-        const currentTile = grid[player.gx][player.gy];
-        if (currentTile && (currentTile.char === '|' || currentTile.char === 'B')) {
-            player.energy = Math.min(600, player.energy + 10);
-        } else { player.energy -= 0.5; }
-        document.getElementById('energy-ui').innerText = "ENERGY: " + Math.floor(player.energy);
-        document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks + "/50";
-        if (player.energy <= 0) { addLog("Exhausted."); isPlayMode = false; }
+        if (!finalTime) document.getElementById('timer-ui').innerText = "TIME: " + ((Date.now() - startTime) / 1000).toFixed(2) + "s";
+        const tile = grid[player.gx][player.gy];
+        if (tile && (tile.char === '|' || tile.char === 'B')) player.energy = Math.min(600, player.energy + 10);
+        else player.energy -= 0.5;
+        document.getElementById('energy-ui').innerText = "NRG: " + Math.floor(player.energy);
+        document.getElementById('rock-ui').innerText = "RCK: " + player.rocks;
+        if (player.energy <= 0) { addLog("NRG DEPLETED."); isPlayMode = false; }
     }
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.font = `bold ${CELL_SIZE}px monospace`;
     beacons.forEach(b => {
-        const isResting = player && player.gx === b.x && player.gy === b.y;
-        ctx.fillStyle = isResting ? "rgba(255, 215, 0, 0.5)" : "rgba(255, 255, 255, 0.2)";
+        ctx.fillStyle = (player && player.gx === b.x && player.gy === b.y) ? "rgba(255, 215, 0, 0.5)" : "rgba(255, 255, 255, 0.2)";
         for(let h=1; h<12; h++) ctx.fillText('{}', b.x * CELL_SIZE, (b.y - h) * CELL_SIZE + 12);
     });
-
     for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
         let item = grid[x][y];
-        if (item && item.char !== ' ') {
-            ctx.fillStyle = item.color;
-            ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + 12);
-        }
+        if (item && item.char !== ' ') { ctx.fillStyle = item.color; ctx.font = "bold 16px monospace"; ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + 12); }
     }
     if (player) { ctx.fillStyle = "#ff4444"; ctx.fillText('p', player.gx * CELL_SIZE, player.gy * CELL_SIZE + 12); }
-    setTimeout(tick, 100);
+    setTimeout(tick, 50);
 }
 tick();
 </script>
