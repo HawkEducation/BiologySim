@@ -1,13 +1,15 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>41-Rock Oasis | Build #16.1 Stable</title>
+    <title>41-Rock Oasis | Build #17 Leaderboard</title>
     <style>
         body { background: #0a1205; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #aaffaa; }
         #main-container { display: flex; gap: 10px; border: 2px solid #2d4c1e; padding: 10px; background: #0f1a09; position: relative; }
         canvas { image-rendering: pixelated; background: #1a2e12; border: 1px solid #3d6a26; }
         #ui-top { position: absolute; top: -45px; left: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 14px; }
-        #log-container { width: 260px; height: 500px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; }
+        #side-panel { width: 260px; display: flex; flex-direction: column; gap: 10px; }
+        #log-container { height: 300px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; padding: 5px; }
+        #leaderboard { height: 180px; background: #0a1a0a; border: 1px solid #00ff00; font-size: 12px; padding: 5px; color: #ffff00; overflow-y: auto; }
         button { background: #1a2e12; color: #aaffaa; border: 1px solid #3d6a26; cursor: pointer; padding: 4px 10px; font-family: inherit; }
         button.active { background: #ff4444; color: #000; font-weight: bold; }
         .stat-box { margin-left: 15px; color: #00ffff; }
@@ -18,20 +20,24 @@
 <div id="main-container">
     <div id="ui-top">
         <div>
-            <button id="toggle-play" onclick="togglePlay()">START SPEEDRUN</button>
+            <button id="toggle-play" onclick="togglePlay()">START GAME</button>
             <span id="energy-ui" class="stat-box" style="display:none;">ENERGY: 400</span>
             <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 10/50</span>
         </div>
         <span id="timer-ui">TIME: 0.0s</span>
     </div>
     <canvas id="simCanvas" width="640" height="480"></canvas>
-    <div id="log-container"></div>
+    <div id="side-panel">
+        <div id="leaderboard">-- LEADERBOARD --</div>
+        <div id="log-container"></div>
+    </div>
 </div>
 
 <script>
 const canvas = document.getElementById('simCanvas');
 const ctx = canvas.getContext('2d');
 const logEl = document.getElementById('log-container');
+const lbEl = document.getElementById('leaderboard');
 const CELL_SIZE = 16; const COLS = 40; const ROWS = 30;
 
 let grid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
@@ -40,28 +46,45 @@ let isPlayMode = false;
 let startTime = 0;
 let finalTime = null;
 let beacons = [];
-let rockCap = 50;
-let tickCount = 0;
+let username = "Guest";
+let leaderboard = [];
 
 function togglePlay() {
-    isPlayMode = !isPlayMode;
-    if (isPlayMode) {
-        document.getElementById('toggle-play').innerText = "RESET";
-        document.getElementById('energy-ui').style.display = "inline";
-        document.getElementById('rock-ui').style.display = "inline";
-        startTime = Date.now();
-        finalTime = null;
-        init();
-        player = new Player(20, 15);
-        addLog("Build #16.1 Active. 2*7 logic engaged.");
-    } else { location.reload(); }
+    if (isPlayMode) { location.reload(); return; }
+    
+    username = prompt("Enter Username:", "Hawk") || "Guest";
+    isPlayMode = true;
+    
+    document.getElementById('toggle-play').innerText = "RESET";
+    document.getElementById('energy-ui').style.display = "inline";
+    document.getElementById('rock-ui').style.display = "inline";
+    
+    startTime = Date.now();
+    finalTime = null;
+    init();
+    
+    player = new Player(20, 15);
+    
+    // THE "TEST" CHEAT
+    if (username.toLowerCase() === "test") {
+        player.rocks = 41;
+        addLog("Cheat Detected: 41 Rocks Granted.");
+    }
+    
+    addLog(`Welcome, ${username}!`);
 }
 
 function addLog(text) {
     const entry = document.createElement('div');
     entry.innerText = `> ${text}`;
     logEl.prepend(entry);
-    if (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
+}
+
+function updateLeaderboard(name, time) {
+    leaderboard.push({name, time: parseFloat(time)});
+    leaderboard.sort((a, b) => a.time - b.time);
+    lbEl.innerHTML = "-- LEADERBOARD --<br>" + 
+        leaderboard.slice(0, 8).map((e, i) => `${i+1}. ${e.name}: ${e.time}s`).join("<br>");
 }
 
 class Player {
@@ -73,23 +96,15 @@ class Player {
         let nx = Math.max(0, Math.min(COLS - 1, this.gx + dx));
         let ny = Math.max(0, Math.min(ROWS - 1, this.gy + dy));
         let target = grid[nx][ny];
-        
-        // Solid Geometry Blocking
         if (target && ['W','O','D'].includes(target.char)) return;
-
-        // Resource Collection
         if (target && target.char === '.') {
-            if (this.rocks < rockCap) { 
-                this.rocks++; 
-                grid[nx][ny] = { char: ' ', color: '#000' }; 
-            }
+            if (this.rocks < 50) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; }
         }
         this.gx = nx; this.gy = ny;
     }
     buildFortress() {
         if (this.rocks >= 41 && !finalTime) {
             this.rocks -= 41;
-            // The 2*7 optimized blueprint
             const blueprint = [
                 [null, 'O', 'O', 'O', null],
                 ['O', 'W', 'e', 'W', 'O'],
@@ -97,22 +112,17 @@ class Player {
                 ['O', 'B', 'D', 'W', 'O'],
                 [null, 'O', null, 'O', null]
             ];
-            for(let j=0; j<5; j++) {
-                for(let i=0; i<5; i++) {
-                    let tx = this.gx - 2 + i;
-                    let ty = this.gy - 2 + j;
-                    if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS && blueprint[j][i]) {
-                        let type = blueprint[j][i];
-                        grid[tx][ty] = { 
-                            char: type, 
-                            color: type==='|'?'#0ff':type==='B'?'#fff':type==='W'?'#8B4513':type==='e'?'#ff0':'#888' 
-                        };
-                        if (type === 'B') beacons.push({x: tx, y: ty});
-                    }
+            for(let j=0; j<5; j++) for(let i=0; i<5; i++) {
+                let tx = this.gx - 2 + i, ty = this.gy - 2 + j;
+                if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS && blueprint[j][i]) {
+                    let type = blueprint[j][i];
+                    grid[tx][ty] = { char: type, color: type==='|'?'#0ff':type==='B'?'#fff':type==='W'?'#8B4513':type==='e'?'#ff0':'#888' };
+                    if (type === 'B') beacons.push({x: tx, y: ty});
                 }
             }
             finalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-            addLog(`Fortress Solidified! Time: ${finalTime}s`);
+            addLog(`Victory! Time: ${finalTime}s`);
+            updateLeaderboard(username, finalTime);
         }
     }
 }
@@ -131,18 +141,12 @@ window.addEventListener("keydown", (e) => {
 });
 
 function tick() {
-    tickCount++;
     if (isPlayMode && player) {
         if (!finalTime) document.getElementById('timer-ui').innerText = "TIME: " + ((Date.now() - startTime) / 1000).toFixed(1) + "s";
-        
-        // DIRECT SENSING: Check if player is on Regen Tile
         const currentTile = grid[player.gx][player.gy];
         if (currentTile && (currentTile.char === '|' || currentTile.char === 'B')) {
-            player.energy = Math.min(600, player.energy + 10); // Buffed for stable throne
-        } else {
-            player.energy -= 0.5;
-        }
-
+            player.energy = Math.min(600, player.energy + 10);
+        } else { player.energy -= 0.5; }
         document.getElementById('energy-ui').innerText = "ENERGY: " + Math.floor(player.energy);
         document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks + "/50";
         if (player.energy <= 0) { addLog("Exhausted."); isPlayMode = false; }
@@ -150,31 +154,20 @@ function tick() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
-
-    // Render Beacons with pulsing gold glow
     beacons.forEach(b => {
         const isResting = player && player.gx === b.x && player.gy === b.y;
         ctx.fillStyle = isResting ? "rgba(255, 215, 0, 0.5)" : "rgba(255, 255, 255, 0.2)";
         for(let h=1; h<12; h++) ctx.fillText('{}', b.x * CELL_SIZE, (b.y - h) * CELL_SIZE + 12);
     });
 
-    // Render Grid Layer
-    for (let x = 0; x < COLS; x++) {
-        for (let y = 0; y < ROWS; y++) {
-            let item = grid[x][y];
-            if (item && item.char !== ' ') {
-                ctx.fillStyle = item.color;
-                ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + 12);
-            }
+    for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
+        let item = grid[x][y];
+        if (item && item.char !== ' ') {
+            ctx.fillStyle = item.color;
+            ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + 12);
         }
     }
-
-    // Render Player Layer (Always on top)
-    if (player) {
-        ctx.fillStyle = "#ff4444";
-        ctx.fillText('p', player.gx * CELL_SIZE, player.gy * CELL_SIZE + 12);
-    }
-    
+    if (player) { ctx.fillStyle = "#ff4444"; ctx.fillText('p', player.gx * CELL_SIZE, player.gy * CELL_SIZE + 12); }
     setTimeout(tick, 100);
 }
 tick();
