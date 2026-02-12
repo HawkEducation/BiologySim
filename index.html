@@ -7,7 +7,6 @@
         canvas { image-rendering: pixelated; background: #1a2e12; border: 1px solid #3d6a26; }
         #ui-top { position: absolute; top: -45px; left: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 14px; }
         #log-container { width: 260px; height: 500px; background: #050a03; border: 1px solid #2d4c1e; font-size: 11px; overflow: hidden; display: flex; flex-direction: column-reverse; color: #ccffcc; }
-        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #1a2e12; padding: 2px; }
         button { background: #1a2e12; color: #aaffaa; border: 1px solid #3d6a26; cursor: pointer; padding: 4px 10px; font-family: inherit; }
         button.active { background: #ff4444; color: #000; font-weight: bold; }
         .stat-box { margin-left: 15px; color: #00ffff; }
@@ -19,7 +18,7 @@
         <div>
             <button id="toggle-play" onclick="togglePlay()">PLAY MODE: OFF</button>
             <span id="energy-ui" class="stat-box" style="display:none;">ENERGY: 400</span>
-            <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 0</span>
+            <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 10</span>
         </div>
         <span id="season-ui">SEASON: WET</span>
     </div>
@@ -42,27 +41,33 @@ let player = null;
 let tickCount = 0;
 let isWetSeason = true;
 let isPlayMode = false;
+let lastDir = {x: 0, y: 1};
+let sentries = [];
+let beacons = [];
+let hasAutoPicker = false;
+let energyCap = 600;
 
 function togglePlay() {
     isPlayMode = !isPlayMode;
     const btn = document.getElementById('toggle-play');
-    const energyDisp = document.getElementById('energy-ui');
-    const rockDisp = document.getElementById('rock-ui');
     if (isPlayMode) {
         btn.innerText = "PLAY MODE: ON"; btn.classList.add('active');
-        energyDisp.style.display = "inline"; rockDisp.style.display = "inline";
+        document.getElementById('energy-ui').style.display = "inline";
+        document.getElementById('rock-ui').style.display = "inline";
         spawnPlayer();
-        addLog("Survival mode active. Collect '.' and press 'P' to plant a home.");
+        addLog("Build the 41-Rock Castle (T) to see the Beacon Light!");
     } else {
         btn.innerText = "PLAY MODE: OFF"; btn.classList.remove('active');
-        energyDisp.style.display = "none"; rockDisp.style.display = "none";
+        document.getElementById('energy-ui').style.display = "none";
+        document.getElementById('rock-ui').style.display = "none";
         removePlayer();
     }
 }
 
 function spawnPlayer() {
-    let rx = Math.floor(Math.random() * COLS), ry = Math.floor(Math.random() * ROWS);
-    player = new Player(rx, ry);
+    player = new Player(20, 25);
+    sentries = []; beacons = [];
+    hasAutoPicker = false; energyCap = 600;
 }
 
 function removePlayer() { if (player) { grid[player.gx][player.gy] = player.standingOn || { char: '.', color: '#444' }; player = null; } }
@@ -83,105 +88,94 @@ class Entity {
     }
     updatePos(nx, ny) {
         let occ = grid[nx][ny];
-        if (occ && (occ.char === 'W' || occ.char === 'O')) return; 
-        if (occ && occ.char === 'D' && this.char !== 'p') return;
-
-        grid[this.gx][this.gy] = (this.standingOn && ['y','v','f','%','T','"', '.', 'W', '|', 'D', 'O'].includes(this.standingOn.char)) ? this.standingOn : { char: '.', color: '#444' };
+        if (this.char !== 'p' && occ && ['W','O','D','R','B','A'].includes(occ.char)) return;
+        grid[this.gx][this.gy] = (this.standingOn && ['y','v','f','%','T','"', '.', 'W', '|', 'D', 'O','#','$', 'G', 'X', 'R','B','A','e'].includes(this.standingOn.char)) ? this.standingOn : { char: '.', color: '#444' };
         this.gx = nx; this.gy = ny;
-        this.standingOn = (occ && ['y','v','f','%','T','"', '.', 'W', '|', 'D', 'O'].includes(occ.char)) ? occ : { char: '.', color: '#444' };
+        this.standingOn = (occ && ['y','v','f','%','T','"', '.', 'W', '|', 'D', 'O','#','$', 'G', 'X', 'R','B','A','e'].includes(occ.char)) ? occ : { char: '.', color: '#444' };
         grid[this.gx][this.gy] = this;
     }
 }
 
 class Player extends Entity {
-    constructor(gx, gy) { super(gx, gy, 'p', '#ff4444'); this.energy = 400; this.rocks = 0; }
+    constructor(gx, gy) { super(gx, gy, 'p', '#ff4444'); this.energy = 400; this.rocks = 10; }
     handleInput(key) {
         let k = key.toLowerCase();
-        if (k === "p") { this.plantTree(); return; }
-        if (key === " ") { this.placeWall(); return; }
+        if (k === "a") { this.buildSentry(); return; }
+        if (k === "t") { this.buildMasterCastle(); return; }
+        if (k === "f") { this.flingRock(); return; }
         
-        let nx = this.gx, ny = this.gy;
-        if (key === "ArrowUp") ny--; if (key === "ArrowDown") ny++;
-        if (key === "ArrowLeft") nx--; if (key === "ArrowRight") nx++;
-        nx = Math.max(0, Math.min(COLS - 1, nx)); ny = Math.max(0, Math.min(ROWS - 1, ny));
-        let target = grid[nx][ny];
-
-        if (target && target.char === '.') {
-            if (this.rocks < 15) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; }
-        }
-        if (target && target.char === 'T') { this.buildFortress(nx, ny); return; }
-        if (target instanceof NPC) { 
-            this.energy = Math.min(600, this.energy + 150); 
-            addLog("Consumed 'm'. Energy up."); 
-            creatures = creatures.filter(c => c !== target); 
-        }
-        if (target && target.char === '!') { this.die(); return; }
+        let dx = 0, dy = 0;
+        if (key === "ArrowUp") dy = -1; if (key === "ArrowDown") dy = 1;
+        if (key === "ArrowLeft") dx = -1; if (key === "ArrowRight") dx = 1;
         
-        this.energy -= 0.4; 
-        this.updatePos(nx, ny);
+        if (dx !== 0 || dy !== 0) {
+            lastDir = {x: dx, y: dy};
+            let nx = Math.max(0, Math.min(COLS - 1, this.gx + dx));
+            let ny = Math.max(0, Math.min(ROWS - 1, this.gy + dy));
+            let target = grid[nx][ny];
+            if (target && target.char === '.') { if (this.rocks < 25) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; } }
+            if (target instanceof NPC || (target && target.char === '#')) { 
+                this.energy = Math.min(energyCap, this.energy + 150); 
+                if (target instanceof NPC) creatures = creatures.filter(c => c !== target);
+                else grid[nx][ny] = { char: '.', color: '#444' };
+            }
+            this.updatePos(nx, ny);
+        }
     }
-    plantTree() {
-        if (this.rocks > 0) {
-            this.rocks--;
-            this.standingOn = { char: 'T', color: '#5cb85c', burnHeat: 0 };
-            addLog("Tree sprouted. Step on it to build.");
+    buildSentry() {
+        if (this.rocks >= 25) { this.rocks -= 25; this.standingOn = { char: 'A', color: '#ff00ff' }; sentries.push({x: this.gx, y: this.gy}); }
+    }
+    buildMasterCastle() {
+        if (this.rocks >= 41) {
+            this.rocks -= 41;
+            const master = [
+                [null, 'O', 'O', 'O', null],
+                ['O', 'W', 'e', 'W', 'O'],
+                ['O', 'W', '|', 'W', 'O'],
+                ['O', 'B', 'D', 'W', 'O'],
+                [null, 'O', null, 'O', null]
+            ];
+            this.applyBlueprint(this.gx, this.gy, master, 5, 5);
+            addLog("41-Rock Castle Online. Beacon Lit.");
+            hasAutoPicker = true;
         } else {
-            addLog("Need rocks to plant seeds.");
+            addLog("41 Rocks needed for Master Blueprint!");
         }
     }
-    placeWall() {
-        if (this.rocks > 0) {
-            this.standingOn = { char: 'O', color: '#888' };
-            this.rocks--;
-            addLog("Rock wall placed.");
-        }
-    }
-    buildFortress(cx, cy) {
-        const blueprint = [
-            [null, 'O', 'O', 'O', null],
-            ['O', 'W', 'W', 'W', 'O'],
-            ['O', 'W', '|', 'W', 'O'],
-            [null, 'O', 'D', 'O', null],
-            [null, null, 'O', null, null]
-        ];
-        if (cx < 2 || cx >= COLS - 2 || cy < 2 || cy >= ROWS - 3) return;
-        
-        // Build and remove anything in the way
-        for(let j = 0; j < 5; j++) {
-            for(let i = 0; i < 5; i++) {
-                let tx = cx - 2 + i, ty = cy - 2 + j;
-                let type = blueprint[j][i];
-                if (type) {
-                    // Check for NPCs in build zone
-                    creatures = creatures.filter(c => !(c.gx === tx && c.gy === ty));
-                    grid[tx][ty] = { 
-                        char: type, 
-                        color: type === 'W' ? '#8B4513' : (type === '|' ? '#87CEEB' : (type === 'D' ? '#A52A2A' : '#888')), 
-                        burnHeat: 0 
-                    };
-                }
+    applyBlueprint(cx, cy, bp, w, h) {
+        let ox = Math.floor(w/2), oy = Math.floor(h/2);
+        for(let j=0; j<h; j++) for(let i=0; i<w; i++) {
+            let tx = cx - ox + i, ty = cy - oy + j;
+            if (tx >=0 && tx < COLS && ty >=0 && ty < ROWS && bp[j][i]) {
+                let type = bp[j][i];
+                let col = type === 'W' ? '#8B4513' : (type === '|' ? '#00ffff' : (type === 'B' ? '#fff' : (type === 'e' ? '#ff0' : (type === 'D' ? '#A52A2A' : '#888'))));
+                grid[tx][ty] = { char: type, color: col };
+                if (type === 'B') beacons.push({x: tx, y: ty});
             }
         }
-        addLog("Fortress construction complete.");
     }
-    die() { addLog("p was consumed by fire."); this.energy = 0; togglePlay(); }
+    flingRock() {
+        if (this.rocks > 0) {
+            this.rocks--; let tx = this.gx + lastDir.x, ty = this.gy + lastDir.y;
+            while (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
+                let hit = grid[tx][ty];
+                if (hit instanceof NPC) { hit.die(); return; }
+                if (hit && ['O','W','A'].includes(hit.char)) break;
+                tx += lastDir.x; ty += lastDir.y;
+            }
+        }
+    }
+    die() { addLog("The Fortress has fallen."); this.energy = 0; togglePlay(); }
 }
 
 class NPC extends Entity {
     move() {
-        this.energy -= 0.4; if (this.energy <= 0) { this.die(); return; }
+        this.energy -= 0.4; if (this.energy <= 0) this.die();
         let nx = Math.max(0, Math.min(COLS - 1, this.gx + (Math.floor(Math.random() * 3) - 1)));
         let ny = Math.max(0, Math.min(ROWS - 1, this.gy + (Math.floor(Math.random() * 3) - 1)));
-        let target = grid[nx][ny];
-        if (!target || ['.','y','v'].includes(target.char)) {
-            if (target && (target.char === 'y' || target.char === 'v')) this.energy += 30;
-            this.updatePos(nx, ny);
-        }
+        this.updatePos(nx, ny);
     }
-    die() {
-        grid[this.gx][this.gy] = { char: '#', color: '#554433', timer: 60 };
-        creatures = creatures.filter(c => c !== this);
-    }
+    die() { grid[this.gx][this.gy] = { char: '#', color: '#ffcc00', timer: 120 }; creatures = creatures.filter(c => c !== this); }
 }
 
 function handleEnvironment() {
@@ -189,55 +183,62 @@ function handleEnvironment() {
     if (tickCount % 500 === 0) isWetSeason = !isWetSeason;
     document.getElementById('season-ui').innerText = "SEASON: " + (isWetSeason ? "WET" : "DRY");
 
-    for (let x = 0; x < COLS; x++) {
-        for (let y = 0; y < ROWS; y++) {
-            let cell = grid[x][y]; if (!cell || cell instanceof Entity) continue;
-            if (cell.char === '!') {
-                let nx = x + (Math.floor(Math.random()*3)-1), ny = y + (Math.floor(Math.random()*3)-1);
-                if (nx>=0 && nx<COLS && ny>=0 && ny<ROWS && grid[nx][ny]) {
-                    let t = grid[nx][ny];
-                    if (['y','v','T','W','D','|'].includes(t.char) && t.char !== 'O') {
-                        t.burnHeat = (t.burnHeat || 0) + (isWetSeason ? 0.5 : 1.5);
-                        if (t.burnHeat > (['W','T'].includes(t.char) ? 30 : 5)) grid[nx][ny] = { char: '!', color: '#ff4500', timer: 20 };
-                    }
+    if (tickCount % 20 === 0 && player) {
+        for(let x=0; x<COLS; x++) for(let y=0; y<ROWS; y++) {
+            let cell = grid[x][y];
+            if (cell instanceof NPC) {
+                let nearWall = false;
+                for(let i=-2; i<=2; i++) for(let j=-2; j<=2; j++) {
+                    if (grid[player.gx+i]?.[player.gy+j]?.char === 'W') nearWall = true;
                 }
-                cell.timer--; if (cell.timer <= 0) grid[x][y] = { char: '%', color: '#555', timer: 45 };
+                if (player.rocks > 0 && nearWall && Math.sqrt((x-player.gx)**2 + (y-player.gy)**2) < 10) { player.rocks--; cell.die(); continue; }
+                if (sentries.find(s => Math.sqrt((x-s.x)**2 + (y-s.y)**2) < 6)) { cell.die(); continue; }
             }
-            if (['%', '"', '#'].includes(cell.char)) { cell.timer--; if (cell.timer <= 0) grid[x][y] = { char: '.', color: '#444' }; }
+            if (hasAutoPicker && cell?.char === '#') {
+                if (Math.sqrt((x-player.gx)**2 + (y-player.gy)**2) < 10) { grid[x][y] = { char: '.', color: '#444' }; player.energy = Math.min(energyCap, player.energy + 150); }
+            }
         }
-    }
-    // Faster plant growth in wet season
-    if (Math.random() < (isWetSeason ? 0.18 : 0.03)) {
-        let rx = Math.floor(Math.random()*COLS), ry = Math.floor(Math.random()*ROWS);
-        if (grid[rx][ry] && grid[rx][ry].char === '.') grid[rx][ry] = { char: 'y', color: '#a2d149' };
     }
 }
 
 function init() {
     for(let i=0; i<COLS; i++) for(let j=0; j<ROWS; j++) grid[i][j] = { char: '.', color: '#444' };
-    for(let i=0; i<18; i++) creatures.push(new NPC(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'm', '#90ee90'));
+    for(let i=0; i<25; i++) creatures.push(new NPC(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'm', '#90ee90'));
 }
 
 window.addEventListener("keydown", (e) => { if (player) player.handleInput(e.key); });
 
 function tick() {
     if (player) {
-        let inBed = (player.standingOn && player.standingOn.char === '|');
-        if (!inBed) player.energy -= 0.5;
+        if (player.standingOn?.char === '|') {
+            player.energy = Math.min(energyCap, player.energy + 4);
+            if (tickCount % 40 === 0 && player.rocks < 25) player.rocks++;
+        } else {
+            player.energy -= 0.4;
+        }
         document.getElementById('energy-ui').innerText = "ENERGY: " + Math.floor(player.energy);
         document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks;
         if (player.energy <= 0) player.die();
     }
     handleEnvironment(); creatures.forEach(c => c.move());
+    if (creatures.length < 18 && Math.random() < 0.05) creatures.push(new NPC(Math.floor(Math.random()*COLS), Math.floor(Math.random()*ROWS), 'm', '#90ee90'));
+    
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
-    for (let x = 0; x < COLS; x++) {
-        for (let y = 0; y < ROWS; y++) {
-            let item = grid[x][y];
-            if (item) {
-                ctx.fillStyle = (item === player && player.standingOn && player.standingOn.char === '|') ? "#fff" : (item.color || '#2ecc71');
-                ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
-            }
+    
+    // Draw Beacon Light "{}"
+    beacons.forEach(b => {
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.2 + Math.abs(Math.sin(tickCount/5)) * 0.3})`;
+        for(let h=1; h<8; h++) {
+            if (b.y - h >= 0) ctx.fillText('{}', b.x * CELL_SIZE - 2, (b.y - h) * CELL_SIZE + (CELL_SIZE * 0.8));
+        }
+    });
+
+    for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
+        let item = grid[x][y];
+        if (item) {
+            ctx.fillStyle = (item === player && player.standingOn?.char === '|') ? "#fff" : (item.color || '#2ecc71');
+            ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + (CELL_SIZE * 0.8));
         }
     }
     setTimeout(tick, 100);
