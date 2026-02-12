@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>41-Rock Oasis | Speedrun Mode</title>
+    <title>41-Rock Oasis | Build #16.1 Stable</title>
     <style>
         body { background: #0a1205; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Courier New', Courier, monospace; color: #aaffaa; }
         #main-container { display: flex; gap: 10px; border: 2px solid #2d4c1e; padding: 10px; background: #0f1a09; position: relative; }
@@ -41,6 +41,7 @@ let startTime = 0;
 let finalTime = null;
 let beacons = [];
 let rockCap = 50;
+let tickCount = 0;
 
 function togglePlay() {
     isPlayMode = !isPlayMode;
@@ -51,8 +52,8 @@ function togglePlay() {
         startTime = Date.now();
         finalTime = null;
         init();
-        player = new Player(20, 25);
-        addLog("Speedrun started! Get 41 Rocks.");
+        player = new Player(20, 15);
+        addLog("Build #16.1 Active. 2*7 logic engaged.");
     } else { location.reload(); }
 }
 
@@ -60,21 +61,23 @@ function addLog(text) {
     const entry = document.createElement('div');
     entry.innerText = `> ${text}`;
     logEl.prepend(entry);
+    if (logEl.children.length > 20) logEl.removeChild(logEl.lastChild);
 }
 
 class Player {
     constructor(gx, gy) {
         this.gx = gx; this.gy = gy;
         this.energy = 400; this.rocks = 10;
-        this.standingOn = grid[gx][gy];
     }
     move(dx, dy) {
-        if (finalTime) return;
         let nx = Math.max(0, Math.min(COLS - 1, this.gx + dx));
         let ny = Math.max(0, Math.min(ROWS - 1, this.gy + dy));
         let target = grid[nx][ny];
+        
+        // Solid Geometry Blocking
         if (target && ['W','O','D'].includes(target.char)) return;
 
+        // Resource Collection
         if (target && target.char === '.') {
             if (this.rocks < rockCap) { 
                 this.rocks++; 
@@ -82,11 +85,11 @@ class Player {
             }
         }
         this.gx = nx; this.gy = ny;
-        this.standingOn = grid[nx][ny];
     }
     buildFortress() {
         if (this.rocks >= 41 && !finalTime) {
             this.rocks -= 41;
+            // The 2*7 optimized blueprint
             const blueprint = [
                 [null, 'O', 'O', 'O', null],
                 ['O', 'W', 'e', 'W', 'O'],
@@ -94,16 +97,22 @@ class Player {
                 ['O', 'B', 'D', 'W', 'O'],
                 [null, 'O', null, 'O', null]
             ];
-            for(let j=0; j<5; j++) for(let i=0; i<5; i++) {
-                let tx = this.gx - 2 + i, ty = this.gy - 2 + j;
-                if (blueprint[j][i]) {
-                    let type = blueprint[j][i];
-                    grid[tx][ty] = { char: type, color: type==='|'?'#0ff':type==='B'?'#fff':type==='W'?'#8B4513':'#888' };
-                    if (type === 'B') beacons.push({x: tx, y: ty});
+            for(let j=0; j<5; j++) {
+                for(let i=0; i<5; i++) {
+                    let tx = this.gx - 2 + i;
+                    let ty = this.gy - 2 + j;
+                    if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS && blueprint[j][i]) {
+                        let type = blueprint[j][i];
+                        grid[tx][ty] = { 
+                            char: type, 
+                            color: type==='|'?'#0ff':type==='B'?'#fff':type==='W'?'#8B4513':type==='e'?'#ff0':'#888' 
+                        };
+                        if (type === 'B') beacons.push({x: tx, y: ty});
+                    }
                 }
             }
             finalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-            addLog(`Oasis Completed in ${finalTime}s!`);
+            addLog(`Fortress Solidified! Time: ${finalTime}s`);
         }
     }
 }
@@ -113,7 +122,7 @@ function init() {
 }
 
 window.addEventListener("keydown", (e) => {
-    if (!player) return;
+    if (!player || !isPlayMode) return;
     if (e.key === "ArrowUp") player.move(0, -1);
     if (e.key === "ArrowDown") player.move(0, 1);
     if (e.key === "ArrowLeft") player.move(-1, 0);
@@ -122,42 +131,50 @@ window.addEventListener("keydown", (e) => {
 });
 
 function tick() {
+    tickCount++;
     if (isPlayMode && player) {
         if (!finalTime) document.getElementById('timer-ui').innerText = "TIME: " + ((Date.now() - startTime) / 1000).toFixed(1) + "s";
         
-        const onRestNode = player.standingOn && (player.standingOn.char === '|' || player.standingOn.char === 'B');
-        if (onRestNode) {
-            player.energy = Math.min(600, player.energy + 6);
+        // DIRECT SENSING: Check if player is on Regen Tile
+        const currentTile = grid[player.gx][player.gy];
+        if (currentTile && (currentTile.char === '|' || currentTile.char === 'B')) {
+            player.energy = Math.min(600, player.energy + 10); // Buffed for stable throne
         } else {
-            player.energy -= 0.4;
+            player.energy -= 0.5;
         }
 
         document.getElementById('energy-ui').innerText = "ENERGY: " + Math.floor(player.energy);
         document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks + "/50";
-        if (player.energy <= 0) { addLog("System Failure."); isPlayMode = false; }
+        if (player.energy <= 0) { addLog("Exhausted."); isPlayMode = false; }
     }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
 
+    // Render Beacons with pulsing gold glow
     beacons.forEach(b => {
-        // Pulse gold if player is on it
         const isResting = player && player.gx === b.x && player.gy === b.y;
-        ctx.fillStyle = isResting ? "rgba(255, 215, 0, 0.4)" : "rgba(255, 255, 255, 0.2)";
+        ctx.fillStyle = isResting ? "rgba(255, 215, 0, 0.5)" : "rgba(255, 255, 255, 0.2)";
         for(let h=1; h<12; h++) ctx.fillText('{}', b.x * CELL_SIZE, (b.y - h) * CELL_SIZE + 12);
     });
 
-    for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
-        let item = grid[x][y];
-        if (item && item.char !== ' ') {
-            ctx.fillStyle = item.color;
-            ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + 12);
-        }
-        if (player && player.gx === x && player.gy === y) {
-            ctx.fillStyle = "#ff4444";
-            ctx.fillText('p', x * CELL_SIZE, y * CELL_SIZE + 12);
+    // Render Grid Layer
+    for (let x = 0; x < COLS; x++) {
+        for (let y = 0; y < ROWS; y++) {
+            let item = grid[x][y];
+            if (item && item.char !== ' ') {
+                ctx.fillStyle = item.color;
+                ctx.fillText(item.char, x * CELL_SIZE, y * CELL_SIZE + 12);
+            }
         }
     }
+
+    // Render Player Layer (Always on top)
+    if (player) {
+        ctx.fillStyle = "#ff4444";
+        ctx.fillText('p', player.gx * CELL_SIZE, player.gy * CELL_SIZE + 12);
+    }
+    
     setTimeout(tick, 100);
 }
 tick();
