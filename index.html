@@ -18,7 +18,7 @@
         <div>
             <button id="toggle-play" onclick="togglePlay()">PLAY MODE: OFF</button>
             <span id="energy-ui" class="stat-box" style="display:none;">ENERGY: 400</span>
-            <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 10</span>
+            <span id="rock-ui" class="stat-box" style="display:none;">ROCKS: 10/50</span>
         </div>
         <span id="season-ui">SEASON: WET</span>
     </div>
@@ -44,8 +44,11 @@ let isPlayMode = false;
 let lastDir = {x: 0, y: 1};
 let sentries = [];
 let beacons = [];
+let gardens = [];
+let muzzleFlashes = [];
 let hasAutoPicker = false;
 let energyCap = 600;
+let rockCap = 50;
 
 function togglePlay() {
     isPlayMode = !isPlayMode;
@@ -55,7 +58,7 @@ function togglePlay() {
         document.getElementById('energy-ui').style.display = "inline";
         document.getElementById('rock-ui').style.display = "inline";
         spawnPlayer();
-        addLog("Build the 41-Rock Castle (T) to see the Beacon Light!");
+        addLog("Update #14: The Oasis Update! Build the 41-Rock Fortress.");
     } else {
         btn.innerText = "PLAY MODE: OFF"; btn.classList.remove('active');
         document.getElementById('energy-ui').style.display = "none";
@@ -66,7 +69,7 @@ function togglePlay() {
 
 function spawnPlayer() {
     player = new Player(20, 25);
-    sentries = []; beacons = [];
+    sentries = []; beacons = []; gardens = []; muzzleFlashes = [];
     hasAutoPicker = false; energyCap = 600;
 }
 
@@ -82,7 +85,7 @@ function addLog(text) {
 class Entity {
     constructor(gx, gy, char, color) {
         this.gx = gx; this.gy = gy;
-        this.char = char; this.baseColor = color; this.color = color;
+        this.char = char; this.color = color;
         this.energy = 200; this.standingOn = grid[gx][gy];
         grid[gx][gy] = this;
     }
@@ -113,7 +116,9 @@ class Player extends Entity {
             let nx = Math.max(0, Math.min(COLS - 1, this.gx + dx));
             let ny = Math.max(0, Math.min(ROWS - 1, this.gy + dy));
             let target = grid[nx][ny];
-            if (target && target.char === '.') { if (this.rocks < 25) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; } }
+            if (target && target.char === '.') { 
+                if (this.rocks < rockCap) { this.rocks++; grid[nx][ny] = { char: ' ', color: '#000' }; } 
+            }
             if (target instanceof NPC || (target && target.char === '#')) { 
                 this.energy = Math.min(energyCap, this.energy + 150); 
                 if (target instanceof NPC) creatures = creatures.filter(c => c !== target);
@@ -123,7 +128,8 @@ class Player extends Entity {
         }
     }
     buildSentry() {
-        if (this.rocks >= 25) { this.rocks -= 25; this.standingOn = { char: 'A', color: '#ff00ff' }; sentries.push({x: this.gx, y: this.gy}); }
+        if (this.rocks >= 25) { this.rocks -= 25; this.standingOn = { char: 'A', color: '#ff00ff' }; sentries.push({x: this.gx, y: this.gy}); addLog("Sentry Online."); }
+        else { addLog(`Need ${25 - this.rocks} more rocks.`); }
     }
     buildMasterCastle() {
         if (this.rocks >= 41) {
@@ -136,10 +142,19 @@ class Player extends Entity {
                 [null, 'O', null, 'O', null]
             ];
             this.applyBlueprint(this.gx, this.gy, master, 5, 5);
-            addLog("41-Rock Castle Online. Beacon Lit.");
+            addLog("The Oasis Fortress is complete. Gardens sprouting...");
             hasAutoPicker = true;
+            // Sprout 3 gardens nearby
+            for(let i=0; i<3; i++) {
+                let gx = this.gx + (Math.floor(Math.random()*7)-3);
+                let gy = this.gy + (Math.floor(Math.random()*7)-3);
+                if(gx >=0 && gx < COLS && gy >=0 && gy < ROWS && grid[gx][gy].char === '.') {
+                    grid[gx][gy] = { char: '%', color: '#2d5a27' };
+                    gardens.push({x: gx, y: gy});
+                }
+            }
         } else {
-            addLog("41 Rocks needed for Master Blueprint!");
+            addLog(`Need ${41 - this.rocks} more rocks!`);
         }
     }
     applyBlueprint(cx, cy, bp, w, h) {
@@ -165,7 +180,7 @@ class Player extends Entity {
             }
         }
     }
-    die() { addLog("The Fortress has fallen."); this.energy = 0; togglePlay(); }
+    die() { addLog("The Oasis has fallen."); this.energy = 0; togglePlay(); }
 }
 
 class NPC extends Entity {
@@ -183,22 +198,37 @@ function handleEnvironment() {
     if (tickCount % 500 === 0) isWetSeason = !isWetSeason;
     document.getElementById('season-ui').innerText = "SEASON: " + (isWetSeason ? "WET" : "DRY");
 
+    // Garden Growth
+    if (tickCount % 150 === 0) {
+        gardens.forEach(g => {
+            if (Math.random() < 0.3) {
+                // Drop food next to garden
+                let rx = g.x + (Math.floor(Math.random()*3)-1);
+                let ry = g.y + (Math.floor(Math.random()*3)-1);
+                if (rx >= 0 && rx < COLS && ry >= 0 && ry < ROWS && grid[rx][ry].char === '.') {
+                    grid[rx][ry] = { char: '#', color: '#ffcc00' };
+                }
+            }
+        });
+    }
+
     if (tickCount % 20 === 0 && player) {
         for(let x=0; x<COLS; x++) for(let y=0; y<ROWS; y++) {
             let cell = grid[x][y];
             if (cell instanceof NPC) {
-                let nearWall = false;
-                for(let i=-2; i<=2; i++) for(let j=-2; j<=2; j++) {
-                    if (grid[player.gx+i]?.[player.gy+j]?.char === 'W') nearWall = true;
-                }
-                if (player.rocks > 0 && nearWall && Math.sqrt((x-player.gx)**2 + (y-player.gy)**2) < 10) { player.rocks--; cell.die(); continue; }
-                if (sentries.find(s => Math.sqrt((x-s.x)**2 + (y-s.y)**2) < 6)) { cell.die(); continue; }
+                let shooter = sentries.find(s => Math.sqrt((x-s.x)**2 + (y-s.y)**2) < 6);
+                if (shooter) { cell.die(); muzzleFlashes.push({x: shooter.x, y: shooter.y, life: 3}); continue; }
             }
             if (hasAutoPicker && cell?.char === '#') {
-                if (Math.sqrt((x-player.gx)**2 + (y-player.gy)**2) < 10) { grid[x][y] = { char: '.', color: '#444' }; player.energy = Math.min(energyCap, player.energy + 150); }
+                if (Math.sqrt((x-player.gx)**2 + (y-player.gy)**2) < 10) { 
+                    grid[x][y] = { char: '.', color: '#444' }; 
+                    player.energy = Math.min(energyCap, player.energy + 150); 
+                }
             }
         }
     }
+    muzzleFlashes.forEach(f => f.life--);
+    muzzleFlashes = muzzleFlashes.filter(f => f.life > 0);
 }
 
 function init() {
@@ -212,12 +242,10 @@ function tick() {
     if (player) {
         if (player.standingOn?.char === '|') {
             player.energy = Math.min(energyCap, player.energy + 4);
-            if (tickCount % 40 === 0 && player.rocks < 25) player.rocks++;
-        } else {
-            player.energy -= 0.4;
-        }
+            if (tickCount % 40 === 0 && player.rocks < rockCap) player.rocks++;
+        } else { player.energy -= 0.4; }
         document.getElementById('energy-ui').innerText = "ENERGY: " + Math.floor(player.energy);
-        document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks;
+        document.getElementById('rock-ui').innerText = "ROCKS: " + player.rocks + "/" + rockCap;
         if (player.energy <= 0) player.die();
     }
     handleEnvironment(); creatures.forEach(c => c.move());
@@ -226,13 +254,15 @@ function tick() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${CELL_SIZE}px monospace`;
     
-    // Draw Beacon Light "{}"
     beacons.forEach(b => {
-        ctx.fillStyle = `rgba(255, 255, 255, ${0.2 + Math.abs(Math.sin(tickCount/5)) * 0.3})`;
-        for(let h=1; h<8; h++) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.1 + Math.abs(Math.sin(tickCount/5)) * 0.2})`;
+        for(let h=1; h<12; h++) {
             if (b.y - h >= 0) ctx.fillText('{}', b.x * CELL_SIZE - 2, (b.y - h) * CELL_SIZE + (CELL_SIZE * 0.8));
         }
     });
+
+    ctx.fillStyle = "#ffff00";
+    muzzleFlashes.forEach(f => { ctx.fillText("*", f.x * CELL_SIZE, f.y * CELL_SIZE + (CELL_SIZE * 0.8)); });
 
     for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
         let item = grid[x][y];
